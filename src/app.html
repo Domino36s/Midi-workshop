@@ -1,0 +1,523 @@
+<title>MIDI Werkstatt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Barlow:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout: eine Arbeitsfläche mit zwei Betriebsarten (Komponieren / Bearbeiten), Piano-Roll als Ergebnisanzeige.
+   Schwarz-Weiß mit genau einem Komplementärpaar: Signal-Orange (Aktion, Melodie) gegen Blau (Bass, Referenz). */
+:root {
+  --bg: #eceef1; --surface: #ffffff; --ink: #0f1114; --ink-2: #565b64; --line: #d3d6dc;
+  --accent: #ff6a1a; --accent-ink: #0f1114; --cool: #1f5fd1; --roll: #f6f7f9; --grid: #dfe2e7; --ghost: #8a909b;
+  --f-head: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --f-body: 'Barlow', system-ui, sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c0d0f; --surface: #16181b; --ink: #eceef1; --ink-2: #9aa1ab; --line: #2a2d33;
+    --accent: #ff7a2e; --cool: #6aa8ff; --roll: #101113; --grid: #23262b; --ghost: #7a808b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c0d0f; --surface: #16181b; --ink: #eceef1; --ink-2: #9aa1ab; --line: #2a2d33;
+  --accent: #ff7a2e; --cool: #6aa8ff; --roll: #101113; --grid: #23262b; --ghost: #7a808b; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.45; }
+.wrap { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; display: flex; flex-direction: column; gap: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+h1 { font-family: var(--f-head); font-weight: 600; font-size: 34px; letter-spacing: .06em; text-transform: uppercase; margin: 0; line-height: 1; }
+h1 small { display: block; font-family: var(--f-mono); font-weight: 400; font-size: 12px; letter-spacing: .04em; text-transform: none; color: var(--ink-2); margin-top: 6px; }
+h2 { font-family: var(--f-head); font-weight: 600; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; margin: 0; color: var(--ink-2); }
+.tabs { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.tabs button { font: 600 15px var(--f-head); letter-spacing: .1em; text-transform: uppercase; padding: 11px 18px; min-height: 44px; border: 0; background: transparent; color: var(--ink-2); cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+.tabs button:focus-visible, .btn:focus-visible, .chip:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, .pill input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+textarea, select, input[type=number], input[type=text] {
+  width: 100%; min-height: 44px; font: 400 16px var(--f-body); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px;
+}
+textarea { resize: vertical; min-height: 84px; line-height: 1.4; }
+.f { display: flex; flex-direction: column; gap: 5px; font: 500 12px var(--f-mono); letter-spacing: .04em; color: var(--ink-2); text-transform: uppercase; min-width: 0; }
+.val { color: var(--ink); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.chip { font: 400 14px var(--f-body); padding: 8px 12px; min-height: 40px; border: 1px solid var(--line); border-radius: 20px; background: var(--bg); color: var(--ink); cursor: pointer; text-align: left; }
+.chip:hover { border-color: var(--ink-2); }
+.pill { position: relative; }
+.pill input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.pill span { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 4px; font: 500 14px var(--f-mono); background: var(--bg); color: var(--ink-2); }
+.pill input:checked + span { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn { font: 600 16px var(--f-head); letter-spacing: .1em; text-transform: uppercase; min-height: 46px; padding: 10px 20px; border-radius: 4px; border: 1px solid var(--ink); background: transparent; color: var(--ink); cursor: pointer; }
+.btn:hover { background: var(--bg); }
+.btn.main { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.main:hover { filter: brightness(1.06); }
+.hint { font-size: 14px; color: var(--ink-2); margin: 0; }
+.note { font: 400 13px var(--f-mono); color: var(--ink-2); margin: 0; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat { border-left: 3px solid var(--line); padding: 2px 0 2px 10px; min-width: 0; }
+.stat b { display: block; font: 500 18px var(--f-mono); font-variant-numeric: tabular-nums; }
+.stat i { font: normal 400 12px var(--f-mono); color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
+.stat.hot { border-color: var(--accent); }
+.roll-box { border: 1px solid var(--line); border-radius: 4px; background: var(--roll); overflow: hidden; }
+canvas { display: block; width: 100%; height: 230px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font: 400 12px var(--f-mono); color: var(--ink-2); }
+.legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 6px; background: var(--c); border: 1px solid var(--c); vertical-align: -1px; }
+.legend span.ghost::before { background: transparent; }
+.drop { border: 1.5px dashed var(--ink-2); border-radius: 6px; padding: 16px; text-align: center; color: var(--ink-2); cursor: pointer; background: var(--bg); }
+.drop.over { border-color: var(--accent); color: var(--ink); }
+.drop input { display: none; }
+.tr { display: flex; justify-content: space-between; gap: 12px; font: 400 13px var(--f-mono); padding: 6px 0; border-bottom: 1px solid var(--line); }
+.tr:last-child { border-bottom: 0; }
+.err { color: #c0392b; font-size: 14px; margin: 0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .err { color: #ff8a7a; } }
+:root[data-theme="dark"] .err { color: #ff8a7a; }
+input[type=range] { width: 100%; accent-color: var(--accent); min-height: 32px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.seg label { flex: 1; position: relative; }
+.seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.seg span { display: block; text-align: center; padding: 10px 8px; min-height: 44px; font: 500 13px var(--f-mono); color: var(--ink-2); background: var(--bg); }
+.seg input:checked + span { background: var(--ink); color: var(--bg); }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+[hidden] { display: none !important; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>MIDI Werkstatt<small>Komponieren und Bearbeiten für FL Studio und FL Mobile</small></h1>
+    <div class="tabs" role="tablist" aria-label="Betriebsart">
+      <button role="tab" id="tab-gen" aria-selected="true" aria-controls="p-gen">Komponieren</button>
+      <button role="tab" id="tab-tool" aria-selected="false" aria-controls="p-tool">Bearbeiten</button>
+    </div>
+  </header>
+
+  <!-- ================= KOMPONIEREN ================= -->
+  <section id="p-gen" role="tabpanel" aria-labelledby="tab-gen" style="display:flex;flex-direction:column;gap:16px">
+    <div class="panel">
+      <h2>Prompt</h2>
+      <label class="f" for="prompt">Suno-Prompt, deutsch oder englisch
+        <textarea id="prompt" spellcheck="false">minimal abstract heavy hiphop-drums, sub, 808, and a melody polyrhythmisch, diatonisch, oder in g#</textarea>
+      </label>
+      <div class="row" id="examples"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Abgeleitete Parameter</h2>
+      <div class="grid">
+        <label class="f" for="f-stil">Stil<select id="f-stil"></select></label>
+        <label class="f" for="f-pc">Tonart (Moll)<select id="f-pc"></select></label>
+        <label class="f" for="f-skala">Skala<select id="f-skala"></select></label>
+        <label class="f" for="f-bpm">Tempo, BPM<input type="number" id="f-bpm" min="50" max="220" inputmode="numeric"></label>
+        <label class="f" for="f-takte">Takte<input type="number" id="f-takte" min="1" max="64" inputmode="numeric"></label>
+        <label class="f" for="f-swing"><span>Swing <span class="val" id="v-swing"></span></span><input type="range" id="f-swing" min="0" max="33" step="1"></label>
+      </div>
+      <div class="row" id="elems" role="group" aria-label="Elemente"></div>
+      <div class="row" id="flags" role="group" aria-label="Charakter"></div>
+      <ul id="annahmen" class="note" style="margin:0;padding-left:18px"></ul>
+      <div class="row">
+        <button class="btn main" id="b-compose">Komponieren</button>
+        <button class="btn" id="b-reroll">Neu würfeln</button>
+      </div>
+    </div>
+
+    <div class="panel" id="gen-out">
+      <h2>Ergebnis</h2>
+      <div class="stats" id="gen-stats"></div>
+      <div class="roll-box"><canvas id="roll-gen" role="img" aria-label="Piano-Roll des Ergebnisses"></canvas></div>
+      <div class="legend" id="gen-legend"></div>
+      <div class="row">
+        <button class="btn" id="g-play">Anhören</button>
+        <button class="btn main" id="g-save"><span id="btn-save-gen">Als ZIP speichern</span></button>
+      </div>
+      <p class="hint" id="save-hint">Die Plattform erlaubt keine .mid-Datei direkt, deshalb kommt sie in einer ZIP. Entpacken und in FL Studio ziehen, jede Spur wird ein eigener Kanal. Die Vorschau ist ein einfacher Testklang, kein Sound aus FL Studio.</p>
+      <p class="err" id="gen-err" hidden></p>
+    </div>
+  </section>
+
+  <!-- ================= BEARBEITEN ================= -->
+  <section id="p-tool" role="tabpanel" aria-labelledby="tab-tool" hidden style="display:flex;flex-direction:column;gap:16px">
+    <div class="panel">
+      <h2>Datei</h2>
+      <label class="drop" id="drop" for="file">MIDI-Datei hier ablegen oder antippen<input type="file" id="file" accept=".mid,.midi,audio/midi"></label>
+      <p class="note" id="src-name"></p>
+      <p class="err" id="tool-err" hidden></p>
+      <div class="stats" id="in-stats"></div>
+      <p class="hint" id="map-hint" hidden></p>
+      <div class="row" id="tempo-chips"></div>
+      <div id="in-tracks"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Einstellungen</h2>
+      <div class="row"><button class="btn main" id="b-suno">Suno-MIDI auf festes Tempo</button></div>
+      <p class="hint">Setzt Tempo auf fest, Zeitbezug auf Takte und Drift aus und bearbeitet sofort. Es gilt das Feld "Festes Tempo" (die Tempo-Knöpfe oben füllen es vor). Raster und Stärke bleiben, wie eingestellt.</p>
+      <div class="grid">
+        <label class="f" for="o-raster">Raster
+          <select id="o-raster">
+            <option value="4">1/4</option><option value="8">1/8</option><option value="16" selected>1/16</option>
+            <option value="32">1/32</option><option value="8t">1/8 Triole</option><option value="16t">1/16 Triole</option>
+          </select></label>
+        <label class="f" for="o-staerke"><span>Stärke <span class="val" id="v-staerke">100 %</span></span><input type="range" id="o-staerke" min="0" max="100" value="100"></label>
+        <label class="f" for="o-swing"><span>Swing <span class="val" id="v-oswing">0 %</span></span><input type="range" id="o-swing" min="0" max="50" value="0"></label>
+        <label class="f" for="o-trag"><span>Drift-Trägheit <span class="val" id="v-trag">0.20</span></span><input type="range" id="o-trag" min="5" max="100" value="20"></label>
+      </div>
+      <div class="row">
+        <label class="pill"><input type="checkbox" id="o-drift" checked><span>Drift herausrechnen</span></label>
+        <label class="pill"><input type="checkbox" id="o-laengen"><span>Notenlängen rastern</span></label>
+      </div>
+      <div class="grid">
+        <div class="f" style="gap:5px">Tempo
+          <div class="seg" role="radiogroup" aria-label="Tempo">
+            <label><input type="radio" name="tm" value="behalten" checked><span>behalten</span></label>
+            <label><input type="radio" name="tm" value="glatt"><span>glätten</span></label>
+            <label><input type="radio" name="tm" value="fest"><span>fest</span></label>
+          </div>
+        </div>
+        <label class="f" for="o-tempo">Festes Tempo, BPM<input type="number" id="o-tempo" min="40" max="240" step="0.1" value="100" inputmode="decimal"></label>
+        <div class="f" style="gap:5px">Zeitbezug
+          <div class="seg" role="radiogroup" aria-label="Zeitbezug">
+            <label><input type="radio" name="zm" value="takte" checked><span>Takte</span></label>
+            <label><input type="radio" name="zm" value="sekunden"><span>Sekunden</span></label>
+          </div>
+        </div>
+      </div>
+      <p class="hint">Takte: Notenpositionen im Raster bleiben, nur das Tempo wird einheitlich. Sekunden: die reale Zeit bleibt erhalten und das Raster wird dem neuen Tempo angepasst. Drift: verfolgt, wie die Noten gegen das Raster wandern, und rechnet das heraus, bevor quantisiert wird.</p>
+      <div class="row"><button class="btn main" id="b-edit">Bearbeiten</button></div>
+    </div>
+
+    <div class="panel" id="tool-out" hidden>
+      <h2>Ergebnis</h2>
+      <div class="stats" id="out-stats"></div>
+      <div class="roll-box"><canvas id="roll-tool" role="img" aria-label="Piano-Roll vorher und nachher"></canvas></div>
+      <div class="legend"><span class="ghost" style="--c:var(--ghost)">vorher</span><span style="--c:var(--accent)">nachher</span></div>
+      <div class="row">
+        <button class="btn" id="t-play">Anhören</button>
+        <button class="btn main" id="t-save">Als ZIP speichern</button>
+      </div>
+      <p class="err" id="tool-err2" hidden></p>
+    </div>
+  </section>
+  <footer class="note">Made by Domino</footer>
+</div>
+
+<script>
+/*@CORE@*/
+</script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const f1 = (x) => x.toFixed(1);
+
+  /* ---------- Speichern: in der Claude-Ansicht als ZIP (dort ist .mid nicht erlaubt), sonst direkt als .mid ---------- */
+  const IN_CLAUDE = !!window.claude;
+  async function speichern(model, basisname, errEl) {
+    errEl.hidden = true;
+    try {
+      const bytes = writeMidi(model);
+      if (IN_CLAUDE) {
+        const dl = await window.claude.use('downloads');
+        if (!dl) throw { code: 'unavailable' };
+        await dl.save({ filename: basisname + '.zip', data: new Blob([makeZip(basisname + '.mid', bytes)], { type: 'application/zip' }) });
+      } else {
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/midi' }));
+        const a = document.createElement('a');
+        a.href = url; a.download = basisname + '.mid';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+      }
+    } catch (e) {
+      if (e && e.code === 'declined') return;
+      errEl.textContent = (e && e.code === 'unavailable') ? 'Speichern ist in dieser Ansicht nicht verfügbar.' : 'Speichern hat nicht geklappt. Bitte noch einmal versuchen.';
+      errEl.hidden = false;
+    }
+  }
+  const sh = document.getElementById('save-hint');
+  if (sh && !IN_CLAUDE) sh.textContent = 'Die Datei wird direkt als .mid gespeichert. Jede Spur wird in FL Studio ein eigener Kanal. Die Vorschau ist ein einfacher Testklang, kein Sound aus FL Studio.';
+  const bt = document.getElementById('btn-save-gen'), bt2 = document.getElementById('t-save');
+  if (!IN_CLAUDE) { if (bt) bt.textContent = 'Als MIDI speichern'; if (bt2) bt2.textContent = 'Als MIDI speichern'; }
+
+  /* ---------- Piano-Roll ---------- */
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  function trackColor(tr, i) {
+    const nm = (tr.name || '').toLowerCase();
+    if (tr.notes.length && tr.notes[0].c === 9) return css('--ink-2');
+    if (nm.includes('melod')) return css('--accent');
+    if (nm.includes('808') || nm.includes('sub')) return css('--cool');
+    if (nm.includes('akkord')) return css('--cool') + '88';
+    return [css('--accent'), css('--cool'), css('--ink-2')][i % 3];
+  }
+  const drumRow = (n) => (n === 36 ? 0 : (n === 42 || n === 46) ? 2 : 1);
+
+  function drawRoll(canvas, layers) {
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    const g = canvas.getContext('2d'); g.scale(dpr, dpr);
+    g.clearRect(0, 0, W, H);
+    let total = 1, lo = 127, hi = 0, hasDrums = false;
+    for (const L of layers) {
+      total = Math.max(total, endTick(L.model));
+      for (const tr of L.model.tracks) for (const n of tr.notes) {
+        if (n.c === 9) hasDrums = true; else { lo = Math.min(lo, n.n); hi = Math.max(hi, n.n); }
+      }
+    }
+    if (hi < lo) { lo = 48; hi = 72; }
+    lo -= 1; hi += 1;
+    const tpb = layers[0].model.tpb, bar = tpb * 4;
+    const padL = 6, padR = 6, pw = W - padL - padR;
+    const drumH = hasDrums ? 46 : 0, pitchH = H - drumH - (hasDrums ? 8 : 0) - 6;
+    const x = (t) => padL + t / total * pw;
+    g.strokeStyle = css('--grid'); g.lineWidth = 1;
+    for (let t = 0; t <= total; t += bar) { const xx = Math.round(x(t)) + .5; g.beginPath(); g.moveTo(xx, 0); g.lineTo(xx, H); g.stroke(); }
+    const ph = Math.max(2, Math.min(9, pitchH / (hi - lo + 1)));
+    for (const L of layers) {
+      L.model.tracks.forEach((tr, i) => {
+        const col = L.ghost ? css('--ghost') : trackColor(tr, i);
+        for (const n of tr.notes) {
+          const x0 = x(n.s), w = Math.max(1.5, x(n.e) - x0 - 0.5);
+          let y, h;
+          if (n.c === 9) { h = drumH / 3 - 3; y = H - drumH - 3 + drumRow(n.n) * (drumH / 3) + 1.5; }
+          else { h = ph - 1; y = 3 + (hi - n.n) / (hi - lo + 1) * pitchH; }
+          if (L.ghost) { g.strokeStyle = col; g.lineWidth = 1; g.strokeRect(x0 + .5, y + .5, Math.max(1, w - 1), Math.max(1, h - 1)); }
+          else { g.fillStyle = col; g.fillRect(x0, y, w, h); }
+        }
+      });
+    }
+  }
+  let redraw = [];
+  window.addEventListener('resize', () => redraw.forEach((f) => f()));
+  new MutationObserver(() => redraw.forEach((f) => f())).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => setTimeout(() => redraw.forEach((f) => f()), 50));
+
+  /* ---------- Vorhören (einfacher Testklang) ---------- */
+  let actx = null, stopTimer = null, playBtn = null;
+  function stopPlay() {
+    if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
+    if (actx) { try { actx.close(); } catch (e) {} actx = null; }
+    if (playBtn) { playBtn.textContent = 'Anhören'; playBtn = null; }
+  }
+  function play(model, btn) {
+    if (playBtn === btn) { stopPlay(); return; }
+    stopPlay();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    actx = new AC(); playBtn = btn; btn.textContent = 'Stopp';
+    const ctx = actx, t0 = ctx.currentTime + 0.15;
+    const master = ctx.createGain(); master.gain.value = 0.55;
+    const comp = ctx.createDynamicsCompressor(); master.connect(comp); comp.connect(ctx.destination);
+    const nb = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate), nd = nb.getChannelData(0);
+    for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+    const sec = (t) => tickZuSek(t, model.tempos, model.tpb);
+    const env = (gn, at, peak, dur, rel) => {
+      gn.gain.setValueAtTime(0.0001, at); gn.gain.linearRampToValueAtTime(peak, at + 0.006);
+      gn.gain.setValueAtTime(peak, at + Math.max(0.007, dur)); gn.gain.exponentialRampToValueAtTime(0.0001, at + Math.max(0.007, dur) + rel);
+    };
+    const noise = (at, dur, type, freq, peak) => {
+      const s = ctx.createBufferSource(); s.buffer = nb;
+      const fl = ctx.createBiquadFilter(); fl.type = type; fl.frequency.value = freq;
+      const gn = ctx.createGain(); env(gn, at, peak, 0.002, dur);
+      s.connect(fl); fl.connect(gn); gn.connect(master); s.start(at); s.stop(at + dur + 0.05);
+    };
+    let last = 0;
+    for (const tr of model.tracks) for (const n of tr.notes) {
+      const at = t0 + sec(n.s), dur = Math.max(0.03, sec(n.e) - sec(n.s)), vel = n.v / 127;
+      last = Math.max(last, at + dur);
+      if (n.c === 9) {
+        if (n.n === 36) {
+          const o = ctx.createOscillator(), gn = ctx.createGain(); o.type = 'sine';
+          o.frequency.setValueAtTime(150, at); o.frequency.exponentialRampToValueAtTime(42, at + 0.14);
+          env(gn, at, vel * 0.9, 0.02, 0.22); o.connect(gn); gn.connect(master); o.start(at); o.stop(at + 0.4);
+        } else if (n.n === 38 || n.n === 39) noise(at, 0.16, 'bandpass', 1800, vel * 0.5);
+        else if (n.n === 46) noise(at, 0.18, 'highpass', 7000, vel * 0.18);
+        else if (n.n === 42) noise(at, 0.04, 'highpass', 8000, vel * 0.16);
+        else noise(at, 0.08, 'bandpass', 900, vel * 0.25);
+        continue;
+      }
+      const f = 440 * Math.pow(2, (n.n - 69) / 12);
+      const o = ctx.createOscillator(), gn = ctx.createGain(), fl = ctx.createBiquadFilter();
+      if (n.n < 52) { o.type = 'sine'; fl.type = 'lowpass'; fl.frequency.value = 600; env(gn, at, vel * 0.8, dur * 0.9, 0.12); }
+      else { o.type = 'sawtooth'; fl.type = 'lowpass'; fl.frequency.value = 1900; env(gn, at, vel * (tr.notes.length > 200 ? 0.07 : 0.14), dur * 0.8, 0.12); }
+      o.frequency.value = f; o.connect(fl); fl.connect(gn); gn.connect(master); o.start(at); o.stop(at + dur + 0.3);
+    }
+    stopTimer = setTimeout(stopPlay, Math.max(500, (last - ctx.currentTime + 0.5) * 1000));
+  }
+
+  /* ---------- Komponieren ---------- */
+  const STIL_LABEL = { hiphop: 'Hip-Hop', trap: 'Trap', techno: 'Techno', house: 'House', dnb: 'Drum and Bass', ambient: 'Ambient' };
+  const SKALA_LABEL = { natuerlich: 'Natürlich Moll (diatonisch)', dorisch: 'Dorisch', phrygisch: 'Phrygisch', harmonisch: 'Harmonisch Moll', pentatonik: 'Moll-Pentatonik' };
+  const EL_LABEL = { drums: 'Drums', '808': '808', sub: 'Sub', melody: 'Melodie', chords: 'Akkorde' };
+  const EL_ORDER = ['drums', '808', 'sub', 'melody', 'chords'];
+  const FLAG_LABEL = { minimal: 'minimal', abstract: 'abstrakt', heavy: 'heavy', poly: 'polyrhythmisch' };
+
+  $('f-stil').innerHTML = Object.keys(STIL_LABEL).map((k) => `<option value="${k}">${STIL_LABEL[k]}</option>`).join('');
+  $('f-pc').innerHTML = NAMEN.map((n, i) => `<option value="${i}">${n}-Moll</option>`).join('');
+  $('f-skala').innerHTML = Object.keys(SKALA_LABEL).map((k) => `<option value="${k}">${SKALA_LABEL[k]}</option>`).join('');
+  $('elems').innerHTML = EL_ORDER.map((k) => `<label class="pill"><input type="checkbox" data-el="${k}"><span>${EL_LABEL[k]}</span></label>`).join('');
+  $('flags').innerHTML = Object.keys(FLAG_LABEL).map((k) => `<label class="pill"><input type="checkbox" data-flag="${k}"><span>${FLAG_LABEL[k]}</span></label>`).join('');
+
+  const BEISPIELE = [
+    'minimal abstract heavy hiphop-drums, sub, 808, and a melody polyrhythmisch, diatonisch, oder in g#',
+    'dark trap 140 bpm, 808, hi-hat rolls, eerie melody in F# phrygian',
+    'düsterer Techno, Gis-Moll, 16 Takte, drums, sub, melodie',
+    'drum and bass 174 bpm D minor dorian drums sub melody',
+    'ambient pad, sub, melancholic, Bb minor, 16 Takte',
+  ];
+  $('examples').innerHTML = BEISPIELE.map((t, i) => `<button class="chip" data-i="${i}">${esc(t.length > 52 ? t.slice(0, 50) + '…' : t)}</button>`).join('');
+
+  let P = null, gen = null, seed = Math.floor(Math.random() * 1e6) + 1;
+
+  function fuelleFelder(p, annahmen) {
+    $('f-stil').value = p.stil; $('f-pc').value = p.pc; $('f-skala').value = p.skala;
+    $('f-bpm').value = p.bpm; $('f-takte').value = p.takte;
+    $('f-swing').value = Math.round(p.swing * 100); $('v-swing').textContent = Math.round(p.swing * 100) + ' %';
+    document.querySelectorAll('[data-el]').forEach((c) => { c.checked = p.elemente.includes(c.dataset.el); });
+    document.querySelectorAll('[data-flag]').forEach((c) => { c.checked = !!p[c.dataset.flag]; });
+    $('annahmen').innerHTML = annahmen.map((a) => `<li>${esc(a)}</li>`).join('');
+  }
+  function leseFelder() {
+    const p = Object.assign({}, P);
+    p.stil = $('f-stil').value; p.pc = +$('f-pc').value; p.skala = $('f-skala').value;
+    p.bpm = Math.max(50, Math.min(220, +$('f-bpm').value || 90));
+    p.takte = Math.max(1, Math.min(64, +$('f-takte').value || 8));
+    p.swing = (+$('f-swing').value) / 100;
+    p.elemente = Array.from(document.querySelectorAll('[data-el]')).filter((c) => c.checked).map((c) => c.dataset.el);
+    document.querySelectorAll('[data-flag]').forEach((c) => { p[c.dataset.flag] = c.checked; });
+    p.seed = seed;
+    return p;
+  }
+  function neuLesen() {
+    P = parsePrompt($('prompt').value);
+    const an = vervollstaendige(P);
+    fuelleFelder(P, an);
+  }
+  function komponieren() {
+    const p = leseFelder();
+    if (!p.elemente.length) { $('gen-err').textContent = 'Wähle mindestens ein Element aus.'; $('gen-err').hidden = false; return; }
+    $('gen-err').hidden = true;
+    stopPlay();
+    gen = { model: compose(p), p };
+    const m = gen.model, a = analysiere(m);
+    const nn = m.tracks.reduce((s, t) => s + t.notes.length, 0);
+    $('gen-stats').innerHTML = [
+      ['Tonart', NAMEN[p.pc] + '-Moll', 1], ['Tempo', p.bpm + ' BPM'], ['Länge, ' + p.takte + ' Takte', f1(a.dauer) + ' s'],
+      ['Akkorde', m.meta.folge], ['Rhythmus', m.meta.polyInfo || (p.poly ? '–' : 'im Takt')], ['Noten', nn],
+    ].map(([k, v, hot]) => `<div class="stat${hot ? ' hot' : ''}"><b>${esc(v)}</b><i>${k}</i></div>`).join('');
+    $('gen-legend').innerHTML = m.tracks.map((t, i) => `<span style="--c:${trackColor(t, i)}">${esc(t.name)} (${t.notes.length})</span>`).join('');
+    const draw = () => drawRoll($('roll-gen'), [{ model: m }]);
+    draw(); redraw = redraw.filter((f) => f.id !== 'gen'); draw.id = 'gen'; redraw.push(draw);
+  }
+  $('prompt').addEventListener('input', neuLesen);
+  $('b-compose').onclick = komponieren;
+  $('b-reroll').onclick = () => { seed = Math.floor(Math.random() * 1e6) + 1; komponieren(); };
+  $('f-swing').addEventListener('input', () => { $('v-swing').textContent = $('f-swing').value + ' %'; });
+  $('examples').onclick = (e) => { const b = e.target.closest('[data-i]'); if (!b) return; $('prompt').value = BEISPIELE[+b.dataset.i]; neuLesen(); komponieren(); };
+  $('g-play').onclick = () => gen && play(gen.model, $('g-play'));
+  $('g-save').onclick = () => {
+    if (!gen) return;
+    const p = gen.p;
+    speichern(gen.model, NAMEN[p.pc].toLowerCase().replace('#', 'is') + '-moll_' + p.stil + '_' + p.bpm + 'bpm_s' + p.seed, $('gen-err'));
+  };
+
+  /* ---------- Bearbeiten ---------- */
+  let src = null, srcName = '', srcFile = 'datei', res = null;
+  function zeigeEingang() {
+    const a = analysiere(src), ts = a.ts, hatMap = ts.anz > 1;
+    const tempoTxt = ts.anz === 0 ? '120 (Standard)' : ts.anz === 1 ? f1(ts.mittel) : f1(ts.lo) + ' bis ' + f1(ts.hi);
+    const cells = [
+      ['Tempo, BPM', tempoTxt, hatMap], ['Dauer', f1(a.dauer) + ' s'], ['Noten', a.anzNoten],
+      ['Abw. 1/16, Mittel', a.dev['16'] ? f1(a.dev['16'].mittel) + ' ms' : '–'],
+      ['Abw. 1/16, Max', a.dev['16'] ? f1(a.dev['16'].max) + ' ms' : '–'],
+    ];
+    if (a.drift && !hatMap) cells.push(['Drift-Hinweis', (a.drift.prozent > 0 ? '+' : '') + f1(a.drift.prozent) + ' %', true]);
+    $('in-stats').innerHTML = cells.map(([k, v, hot]) => `<div class="stat${hot ? ' hot' : ''}"><b>${esc(v)}</b><i>${k}</i></div>`).join('');
+    $('in-tracks').innerHTML = a.spuren.map((s) => `<div class="tr"><span>${esc(s.name)}${s.drums ? ' (Drums)' : ''}</span><span>${s.anz} Noten, ${s.lo}-${s.hi}</span></div>`).join('');
+    $('src-name').textContent = srcName + (a.drift && !hatMap ? ' | Die Noten laufen gegen das Raster, scheinbares Tempo etwa ' + f1(a.drift.scheinbar) + ' BPM (grobe Schätzung).' : '');
+    $('map-hint').hidden = !hatMap;
+    if (hatMap) $('map-hint').textContent = 'Diese Datei hat ' + ts.anz + ' Tempowechsel (Tempo-Map). Die Schwankung ist darin schon erfasst, deshalb gibt es hier keinen Drift-Hinweis. Mittel und Median unten stammen aus der Map. Für ein festes Tempo nimm das echte Projekt-Tempo, wenn du es kennst.';
+    let chips = [];
+    if (hatMap) chips = [['Mittel', ts.mittel], ['Median', tempoMedian(src.tempos, endTick(src))]];
+    else { const est = schaetzeTempo(src); if (est) chips = est.kand.map((b, i) => [i === 0 ? 'Schätzung' : (b > est.bpm ? 'doppelt' : 'halb'), b]); }
+    $('tempo-chips').innerHTML = chips.length ? '<span class="note">Tempo wählen:</span>' + chips.map(([l, b]) => `<button class="chip" data-bpm="${Math.round(b * 10) / 10}">${l} ${f1(b)}</button>`).join('') : '';
+    $('o-tempo').value = Math.round(ts.mittel * 10) / 10;
+    $('o-drift').checked = !hatMap;
+    $('tool-out').hidden = true; res = null;
+  }
+  function ladeBytes(bytes, name) {
+    $('tool-err').hidden = true;
+    try { src = parseMidi(bytes); srcName = name; srcFile = name; zeigeEingang(); }
+    catch (e) { $('tool-err').textContent = e.message || 'Die Datei konnte nicht gelesen werden.'; $('tool-err').hidden = false; }
+  }
+  $('file').addEventListener('change', (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader(); r.onload = () => ladeBytes(new Uint8Array(r.result), f.name); r.readAsArrayBuffer(f);
+  });
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', (e) => {
+    const f = e.dataTransfer.files[0]; if (!f) return;
+    const r = new FileReader(); r.onload = () => ladeBytes(new Uint8Array(r.result), f.name); r.readAsArrayBuffer(f);
+  });
+  const radio = (name) => document.querySelector(`input[name="${name}"]:checked`).value;
+  $('o-staerke').addEventListener('input', () => { $('v-staerke').textContent = $('o-staerke').value + ' %'; });
+  $('o-swing').addEventListener('input', () => { $('v-oswing').textContent = $('o-swing').value + ' %'; });
+  $('o-trag').addEventListener('input', () => { $('v-trag').textContent = ($('o-trag').value / 100).toFixed(2); });
+
+  $('b-edit').onclick = () => {
+    if (!src) return;
+    stopPlay();
+    const o = {
+      raster: $('o-raster').value, staerke: +$('o-staerke').value, swing: +$('o-swing').value,
+      laengen: $('o-laengen').checked, drift: $('o-drift').checked, traegheit: +$('o-trag').value / 100,
+      tempoModus: radio('tm'), tempo: +$('o-tempo').value || 100, zeitModus: radio('zm'),
+    };
+    res = bearbeite(src, o);
+    const b = res.bericht;
+    const tempoNach = b.tempoNach ? f1(b.tempoNach) + ' BPM' : (b.anz > 1 ? b.anz + ' Wechsel' : f1(b.tempoVon.mittel) + ' BPM');
+    $('out-stats').innerHTML = [
+      ['Abweichung, Mittel', f1(b.devVor.mittel) + ' → ' + f1(b.devNach.mittel) + ' ms', 1],
+      ['Abweichung, Max', f1(b.devVor.max) + ' → ' + f1(b.devNach.max) + ' ms'],
+      ['Tempo', tempoNach],
+      ['Raster', '1/' + o.raster.replace('t', ' Triole') + ', ' + o.staerke + ' %'],
+    ].map(([k, v, hot]) => `<div class="stat${hot ? ' hot' : ''}"><b>${esc(v)}</b><i>${k}</i></div>`).join('');
+    $('tool-out').hidden = false;
+    const draw = () => drawRoll($('roll-tool'), [{ model: src, ghost: true }, { model: res.model }]);
+    draw(); redraw = redraw.filter((f) => f.id !== 'tool'); draw.id = 'tool'; redraw.push(draw);
+  };
+  $('tempo-chips').onclick = (e) => {
+    const b = e.target.closest('[data-bpm]'); if (!b) return;
+    $('o-tempo').value = b.dataset.bpm;
+    document.querySelector('input[name="tm"][value="fest"]').checked = true;
+  };
+  $('b-suno').onclick = () => {
+    document.querySelector('input[name="tm"][value="fest"]').checked = true;
+    document.querySelector('input[name="zm"][value="takte"]').checked = true;
+    $('o-drift').checked = false;
+    $('b-edit').click();
+  };
+  $('t-play').onclick = () => res && play(res.model, $('t-play'));
+  $('t-save').onclick = () => {
+    if (!res) return;
+    const base = (srcFile || 'datei').replace(/\.(mid|midi)$/i, '').replace(/[^\wäöüÄÖÜß .-]+/g, '_').trim().slice(0, 60) + '_bearbeitet';
+    speichern(res.model, base, $('tool-err2'));
+  };
+
+  /* ---------- Reiter ---------- */
+  function reiter(which) {
+    stopPlay();
+    const gen_ = which === 'gen';
+    $('p-gen').hidden = !gen_; $('p-tool').hidden = gen_;
+    $('tab-gen').setAttribute('aria-selected', gen_); $('tab-tool').setAttribute('aria-selected', !gen_);
+    try { history.replaceState(null, '', '#' + which); } catch (e) {}
+    setTimeout(() => redraw.forEach((f) => f()), 30);
+  }
+  $('tab-gen').onclick = () => reiter('gen'); $('tab-tool').onclick = () => reiter('tool');
+
+  /* ---------- Start: Arbeitszustand mit Beispielen ---------- */
+  neuLesen(); komponieren();
+  src = beispielDrift(); srcName = 'Beispiel: Aufnahme mit Tempo-Drift (100 auf 108 BPM, ohne Tempo-Eintrag)'; srcFile = 'beispiel-drift';
+  zeigeEingang();
+  if (location.hash === '#tool') reiter('tool');
+})();
+</script>
