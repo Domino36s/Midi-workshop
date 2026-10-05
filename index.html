@@ -1,0 +1,1223 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="author" content="Domino">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="MIDI Werkstatt: Moll-Melodien und Beats aus Suno-Prompts erzeugen, MIDI-Dateien quantisieren, Tempo glätten und Drift korrigieren. Läuft komplett im Browser.">
+<style>html{color-scheme:light}body{margin:0}</style>
+<title>MIDI Werkstatt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Barlow:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout: eine Arbeitsfläche mit zwei Betriebsarten (Komponieren / Bearbeiten), Piano-Roll als Ergebnisanzeige.
+   Schwarz-Weiß mit genau einem Komplementärpaar: Signal-Orange (Aktion, Melodie) gegen Blau (Bass, Referenz). */
+:root {
+  --bg: #eceef1; --surface: #ffffff; --ink: #0f1114; --ink-2: #565b64; --line: #d3d6dc;
+  --accent: #ff6a1a; --accent-ink: #0f1114; --cool: #1f5fd1; --roll: #f6f7f9; --grid: #dfe2e7; --ghost: #8a909b;
+  --f-head: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --f-body: 'Barlow', system-ui, sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c0d0f; --surface: #16181b; --ink: #eceef1; --ink-2: #9aa1ab; --line: #2a2d33;
+    --accent: #ff7a2e; --cool: #6aa8ff; --roll: #101113; --grid: #23262b; --ghost: #7a808b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c0d0f; --surface: #16181b; --ink: #eceef1; --ink-2: #9aa1ab; --line: #2a2d33;
+  --accent: #ff7a2e; --cool: #6aa8ff; --roll: #101113; --grid: #23262b; --ghost: #7a808b; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.45; }
+.wrap { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; display: flex; flex-direction: column; gap: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+h1 { font-family: var(--f-head); font-weight: 600; font-size: 34px; letter-spacing: .06em; text-transform: uppercase; margin: 0; line-height: 1; }
+h1 small { display: block; font-family: var(--f-mono); font-weight: 400; font-size: 12px; letter-spacing: .04em; text-transform: none; color: var(--ink-2); margin-top: 6px; }
+h2 { font-family: var(--f-head); font-weight: 600; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; margin: 0; color: var(--ink-2); }
+.tabs { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.tabs button { font: 600 15px var(--f-head); letter-spacing: .1em; text-transform: uppercase; padding: 11px 18px; min-height: 44px; border: 0; background: transparent; color: var(--ink-2); cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+.tabs button:focus-visible, .btn:focus-visible, .chip:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, .pill input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+textarea, select, input[type=number], input[type=text] {
+  width: 100%; min-height: 44px; font: 400 16px var(--f-body); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px;
+}
+textarea { resize: vertical; min-height: 84px; line-height: 1.4; }
+.f { display: flex; flex-direction: column; gap: 5px; font: 500 12px var(--f-mono); letter-spacing: .04em; color: var(--ink-2); text-transform: uppercase; min-width: 0; }
+.val { color: var(--ink); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.chip { font: 400 14px var(--f-body); padding: 8px 12px; min-height: 40px; border: 1px solid var(--line); border-radius: 20px; background: var(--bg); color: var(--ink); cursor: pointer; text-align: left; }
+.chip:hover { border-color: var(--ink-2); }
+.pill { position: relative; }
+.pill input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.pill span { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 4px; font: 500 14px var(--f-mono); background: var(--bg); color: var(--ink-2); }
+.pill input:checked + span { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn { font: 600 16px var(--f-head); letter-spacing: .1em; text-transform: uppercase; min-height: 46px; padding: 10px 20px; border-radius: 4px; border: 1px solid var(--ink); background: transparent; color: var(--ink); cursor: pointer; }
+.btn:hover { background: var(--bg); }
+.btn.main { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.main:hover { filter: brightness(1.06); }
+.hint { font-size: 14px; color: var(--ink-2); margin: 0; }
+.note { font: 400 13px var(--f-mono); color: var(--ink-2); margin: 0; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat { border-left: 3px solid var(--line); padding: 2px 0 2px 10px; min-width: 0; }
+.stat b { display: block; font: 500 18px var(--f-mono); font-variant-numeric: tabular-nums; }
+.stat i { font: normal 400 12px var(--f-mono); color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
+.stat.hot { border-color: var(--accent); }
+.roll-box { border: 1px solid var(--line); border-radius: 4px; background: var(--roll); overflow: hidden; }
+canvas { display: block; width: 100%; height: 230px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font: 400 12px var(--f-mono); color: var(--ink-2); }
+.legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 6px; background: var(--c); border: 1px solid var(--c); vertical-align: -1px; }
+.legend span.ghost::before { background: transparent; }
+.drop { border: 1.5px dashed var(--ink-2); border-radius: 6px; padding: 16px; text-align: center; color: var(--ink-2); cursor: pointer; background: var(--bg); }
+.drop.over { border-color: var(--accent); color: var(--ink); }
+.drop input { display: none; }
+.tr { display: flex; justify-content: space-between; gap: 12px; font: 400 13px var(--f-mono); padding: 6px 0; border-bottom: 1px solid var(--line); }
+.tr:last-child { border-bottom: 0; }
+.err { color: #c0392b; font-size: 14px; margin: 0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .err { color: #ff8a7a; } }
+:root[data-theme="dark"] .err { color: #ff8a7a; }
+input[type=range] { width: 100%; accent-color: var(--accent); min-height: 32px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.seg label { flex: 1; position: relative; }
+.seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.seg span { display: block; text-align: center; padding: 10px 8px; min-height: 44px; font: 500 13px var(--f-mono); color: var(--ink-2); background: var(--bg); }
+.seg input:checked + span { background: var(--ink); color: var(--bg); }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+[hidden] { display: none !important; }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>MIDI Werkstatt<small>Komponieren und Bearbeiten für FL Studio und FL Mobile</small></h1>
+    <div class="tabs" role="tablist" aria-label="Betriebsart">
+      <button role="tab" id="tab-gen" aria-selected="true" aria-controls="p-gen">Komponieren</button>
+      <button role="tab" id="tab-tool" aria-selected="false" aria-controls="p-tool">Bearbeiten</button>
+    </div>
+  </header>
+
+  <!-- ================= KOMPONIEREN ================= -->
+  <section id="p-gen" role="tabpanel" aria-labelledby="tab-gen" style="display:flex;flex-direction:column;gap:16px">
+    <div class="panel">
+      <h2>Prompt</h2>
+      <label class="f" for="prompt">Suno-Prompt, deutsch oder englisch
+        <textarea id="prompt" spellcheck="false">minimal abstract heavy hiphop-drums, sub, 808, and a melody polyrhythmisch, diatonisch, oder in g#</textarea>
+      </label>
+      <div class="row" id="examples"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Abgeleitete Parameter</h2>
+      <div class="grid">
+        <label class="f" for="f-stil">Stil<select id="f-stil"></select></label>
+        <label class="f" for="f-pc">Tonart (Moll)<select id="f-pc"></select></label>
+        <label class="f" for="f-skala">Skala<select id="f-skala"></select></label>
+        <label class="f" for="f-bpm">Tempo, BPM<input type="number" id="f-bpm" min="50" max="220" inputmode="numeric"></label>
+        <label class="f" for="f-takte">Takte<input type="number" id="f-takte" min="1" max="64" inputmode="numeric"></label>
+        <label class="f" for="f-swing"><span>Swing <span class="val" id="v-swing"></span></span><input type="range" id="f-swing" min="0" max="33" step="1"></label>
+      </div>
+      <div class="row" id="elems" role="group" aria-label="Elemente"></div>
+      <div class="row" id="flags" role="group" aria-label="Charakter"></div>
+      <ul id="annahmen" class="note" style="margin:0;padding-left:18px"></ul>
+      <div class="row">
+        <button class="btn main" id="b-compose">Komponieren</button>
+        <button class="btn" id="b-reroll">Neu würfeln</button>
+      </div>
+    </div>
+
+    <div class="panel" id="gen-out">
+      <h2>Ergebnis</h2>
+      <div class="stats" id="gen-stats"></div>
+      <div class="roll-box"><canvas id="roll-gen" role="img" aria-label="Piano-Roll des Ergebnisses"></canvas></div>
+      <div class="legend" id="gen-legend"></div>
+      <div class="row">
+        <button class="btn" id="g-play">Anhören</button>
+        <button class="btn main" id="g-save"><span id="btn-save-gen">Als ZIP speichern</span></button>
+      </div>
+      <p class="hint" id="save-hint">Die Plattform erlaubt keine .mid-Datei direkt, deshalb kommt sie in einer ZIP. Entpacken und in FL Studio ziehen, jede Spur wird ein eigener Kanal. Die Vorschau ist ein einfacher Testklang, kein Sound aus FL Studio.</p>
+      <p class="err" id="gen-err" hidden></p>
+    </div>
+  </section>
+
+  <!-- ================= BEARBEITEN ================= -->
+  <section id="p-tool" role="tabpanel" aria-labelledby="tab-tool" hidden style="display:flex;flex-direction:column;gap:16px">
+    <div class="panel">
+      <h2>Datei</h2>
+      <label class="drop" id="drop" for="file">MIDI-Datei hier ablegen oder antippen<input type="file" id="file" accept=".mid,.midi,audio/midi"></label>
+      <p class="note" id="src-name"></p>
+      <p class="err" id="tool-err" hidden></p>
+      <div class="stats" id="in-stats"></div>
+      <p class="hint" id="map-hint" hidden></p>
+      <div class="row" id="tempo-chips"></div>
+      <div id="in-tracks"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Einstellungen</h2>
+      <div class="row"><button class="btn main" id="b-suno">Suno-MIDI auf festes Tempo</button></div>
+      <p class="hint">Setzt Tempo auf fest, Zeitbezug auf Takte und Drift aus und bearbeitet sofort. Es gilt das Feld "Festes Tempo" (die Tempo-Knöpfe oben füllen es vor). Raster und Stärke bleiben, wie eingestellt.</p>
+      <div class="grid">
+        <label class="f" for="o-raster">Raster
+          <select id="o-raster">
+            <option value="4">1/4</option><option value="8">1/8</option><option value="16" selected>1/16</option>
+            <option value="32">1/32</option><option value="8t">1/8 Triole</option><option value="16t">1/16 Triole</option>
+          </select></label>
+        <label class="f" for="o-staerke"><span>Stärke <span class="val" id="v-staerke">100 %</span></span><input type="range" id="o-staerke" min="0" max="100" value="100"></label>
+        <label class="f" for="o-swing"><span>Swing <span class="val" id="v-oswing">0 %</span></span><input type="range" id="o-swing" min="0" max="50" value="0"></label>
+        <label class="f" for="o-trag"><span>Drift-Trägheit <span class="val" id="v-trag">0.20</span></span><input type="range" id="o-trag" min="5" max="100" value="20"></label>
+      </div>
+      <div class="row">
+        <label class="pill"><input type="checkbox" id="o-drift" checked><span>Drift herausrechnen</span></label>
+        <label class="pill"><input type="checkbox" id="o-laengen"><span>Notenlängen rastern</span></label>
+      </div>
+      <div class="grid">
+        <div class="f" style="gap:5px">Tempo
+          <div class="seg" role="radiogroup" aria-label="Tempo">
+            <label><input type="radio" name="tm" value="behalten" checked><span>behalten</span></label>
+            <label><input type="radio" name="tm" value="glatt"><span>glätten</span></label>
+            <label><input type="radio" name="tm" value="fest"><span>fest</span></label>
+          </div>
+        </div>
+        <label class="f" for="o-tempo">Festes Tempo, BPM<input type="number" id="o-tempo" min="40" max="240" step="0.1" value="100" inputmode="decimal"></label>
+        <div class="f" style="gap:5px">Zeitbezug
+          <div class="seg" role="radiogroup" aria-label="Zeitbezug">
+            <label><input type="radio" name="zm" value="takte" checked><span>Takte</span></label>
+            <label><input type="radio" name="zm" value="sekunden"><span>Sekunden</span></label>
+          </div>
+        </div>
+      </div>
+      <p class="hint">Takte: Notenpositionen im Raster bleiben, nur das Tempo wird einheitlich. Sekunden: die reale Zeit bleibt erhalten und das Raster wird dem neuen Tempo angepasst. Drift: verfolgt, wie die Noten gegen das Raster wandern, und rechnet das heraus, bevor quantisiert wird.</p>
+      <div class="row"><button class="btn main" id="b-edit">Bearbeiten</button></div>
+    </div>
+
+    <div class="panel" id="tool-out" hidden>
+      <h2>Ergebnis</h2>
+      <div class="stats" id="out-stats"></div>
+      <div class="roll-box"><canvas id="roll-tool" role="img" aria-label="Piano-Roll vorher und nachher"></canvas></div>
+      <div class="legend"><span class="ghost" style="--c:var(--ghost)">vorher</span><span style="--c:var(--accent)">nachher</span></div>
+      <div class="row">
+        <button class="btn" id="t-play">Anhören</button>
+        <button class="btn main" id="t-save">Als ZIP speichern</button>
+      </div>
+      <p class="err" id="tool-err2" hidden></p>
+    </div>
+  </section>
+  <footer class="note">Made by Domino</footer>
+</div>
+
+<script>
+/* ====== Kern: MIDI lesen/schreiben, Werkzeug, Generator (reine Funktionen) ====== */
+
+const TPB = 480;
+const S = TPB / 4;
+const NAMEN = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B'];
+
+const SKALEN = {
+  natuerlich: [0, 2, 3, 5, 7, 8, 10],
+  dorisch: [0, 2, 3, 5, 7, 9, 10],
+  phrygisch: [0, 1, 3, 5, 7, 8, 10],
+  harmonisch: [0, 2, 3, 5, 7, 8, 11],
+  pentatonik: [0, 3, 5, 7, 10],
+};
+const SKALEN7 = {};
+for (const k in SKALEN) SKALEN7[k] = SKALEN[k].length === 7 ? SKALEN[k] : SKALEN.natuerlich;
+
+const STIL_BPM = { hiphop: 90, trap: 140, techno: 128, house: 122, dnb: 174, ambient: 75 };
+const STIL_ELEMENTE = {
+  hiphop: ['drums', '808', 'melody'],
+  trap: ['drums', '808', 'melody'],
+  techno: ['drums', 'sub', 'melody'],
+  house: ['drums', 'sub', 'chords', 'melody'],
+  dnb: ['drums', 'sub', 'melody'],
+  ambient: ['chords', 'sub', 'melody'],
+};
+const PROGRESSIONEN = [[0, 5, 2, 6], [0, 3, 5, 4], [0, 6, 5, 6], [0, 0, 5, 3], [0, 3, 0, 4], [0, 6, 0, 6]];
+const MINIMAL_PROGRESSIONEN = [[0], [0, 0, 0, 6], [0, 0, 0, 5], [0, 3]];
+const STUFEN = ['i', 'ii', 'III', 'iv', 'v', 'VI', 'VII'];
+
+const STIL_WOERTER = {
+  trap: ['trap', 'drill', 'phonk'],
+  hiphop: ['hip[\\s-]?hop', 'boom[\\s-]?bap', '\\brap\\b', 'lo-?fi'],
+  techno: ['techno'],
+  house: ['house'],
+  dnb: ['\\bdnb\\b', 'drum (?:and|&|n) bass', 'jungle'],
+  ambient: ['ambient', 'drone', 'cinematic'],
+};
+const ELEMENT_WOERTER = {
+  drums: '\\b(drums?|beats?|kicks?|snares?|hi-?hats?|hats|percussion|perkussion)\\b',
+  '808': '\\b808s?\\b',
+  sub: '\\bsub(?:-?bass)?\\b|\\bbass\\b',
+  melody: '\\b(melod(?:y|ie|ien|ies)|lead|arp|arpeggio|synth)\\b',
+  chords: '\\b(chords?|akkord\\w*|pads?)\\b',
+};
+const SKALA_WOERTER = [
+  ['dorisch', 'dorian|dorisch'],
+  ['phrygisch', 'phrygian|phrygisch'],
+  ['harmonisch', 'harmonic minor|harmonisch'],
+  ['pentatonik', 'pentatonic|pentatonik'],
+  ['natuerlich', 'natural minor|natuerlich|natürlich|diatonic|diatonisch|aeolian|aeolisch|äolisch'],
+];
+
+/* ---------- Zufall (mit Seed) ---------- */
+function makeRng(seed) {
+  let a = (seed >>> 0) || 1;
+  const random = () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const int = (lo, hi) => lo + Math.floor(random() * (hi - lo + 1));
+  const choice = (arr) => arr[Math.floor(random() * arr.length)];
+  const sample = (arr, k) => {
+    const c = arr.slice();
+    for (let i = 0; i < Math.min(k, c.length); i++) {
+      const j = i + Math.floor(random() * (c.length - i));
+      [c[i], c[j]] = [c[j], c[i]];
+    }
+    return c.slice(0, k);
+  };
+  const choices = (pool, weights, k) => {
+    const sum = weights.reduce((x, y) => x + y, 0);
+    const out = [];
+    for (let i = 0; i < k; i++) {
+      let r = random() * sum, idx = 0;
+      while (idx < pool.length - 1 && r >= weights[idx]) { r -= weights[idx]; idx++; }
+      out.push(pool[idx]);
+    }
+    return out;
+  };
+  return { random, int, choice, sample, choices };
+}
+
+/* ---------- Prompt lesen ---------- */
+function pcAus(l, v) {
+  const base = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11, h: 11 }[l];
+  let x = base;
+  if (v === '#' || v === '♯') x++;
+  else if (v === 'b' || v === '♭') x--;
+  return ((x % 12) + 12) % 12;
+}
+
+function findeTonart(t) {
+  let m = t.match(/\b([cdfga])is(?:[- ]?moll)?\b/);
+  if (m) return pcAus(m[1], '#');
+  m = t.match(/\b(as|des|es|ges)[- ]?moll\b/);
+  if (m) return { as: 8, des: 1, es: 3, ges: 6 }[m[1]];
+  m = t.match(/(?:^|[^a-z])([a-gh])\s?(#|♯)/);
+  if (m) return pcAus(m[1], '#');
+  m = t.match(/\b([a-gh])\s?(b|♭)?\s?[- ]?(?:minor|moll|min)\b/);
+  if (m) return pcAus(m[1], m[2] || '');
+  m = t.match(/\b(?:in|key of|key|tonart)\s+([a-gh])(#|♯|b|♭)?(?=\W|$)/);
+  if (m) return pcAus(m[1], m[2] || '');
+  return null;
+}
+
+function parsePrompt(text) {
+  const t = text.toLowerCase();
+  const p = { stil: null, pc: null, bpm: null, skala: null, takte: 8, elemente: [],
+    minimal: false, abstract: false, heavy: false, poly: false, swing: null, dark: false };
+
+  let best = 0;
+  for (const s in STIL_WOERTER) {
+    const n = STIL_WOERTER[s].reduce((a, w) => a + (t.match(new RegExp(w, 'g')) || []).length, 0);
+    if (n > best) { best = n; p.stil = s; }
+  }
+  p.pc = findeTonart(t);
+  let m = t.match(/(\d{2,3})\s*bpm/) || t.match(/bpm\s*[:=]?\s*(\d{2,3})/);
+  if (m) p.bpm = Math.max(50, Math.min(220, parseInt(m[1], 10)));
+  m = t.match(/(\d{1,3})\s*(?:takte|takt|bars?)\b/);
+  if (m) p.takte = Math.max(1, Math.min(64, parseInt(m[1], 10)));
+  for (const [name, w] of SKALA_WOERTER) {
+    if (new RegExp(w).test(t)) { p.skala = name; break; }
+  }
+  p.elemente = Object.keys(ELEMENT_WOERTER).filter((e) => new RegExp(ELEMENT_WOERTER[e]).test(t));
+  p.minimal = /minimal|sparse|reduced|reduziert|spärlich|spaerlich/.test(t);
+  p.abstract = /abstract|abstrakt|experimental|glitch|\bidm\b|weird/.test(t);
+  p.heavy = /heavy|\bhard\b|hart|aggressive|aggressiv|brutal|distorted/.test(t);
+  p.dark = /dark|düster|duester|dunkel|ominous|gloomy/.test(t);
+  p.poly = /polyrhythm|polymeter|polymetric|polymetrisch/.test(t);
+  if (/swing|swung|shuffle/.test(t)) p.swing = 0.25;
+  return p;
+}
+
+function vervollstaendige(p) {
+  const annahmen = [];
+  if (p.stil === null) { p.stil = 'hiphop'; annahmen.push('Stil nicht erkannt, daher Hip-Hop'); }
+  if (p.pc === null) { p.pc = 9; annahmen.push('Tonart nicht erkannt, daher A-Moll'); }
+  if (p.skala === null) {
+    p.skala = p.dark ? 'phrygisch' : 'natuerlich';
+    if (p.dark) annahmen.push('"dark" erkannt: phrygisch (Moll mit kleiner Sekunde)');
+  }
+  if (p.bpm === null) p.bpm = STIL_BPM[p.stil];
+  if (!p.elemente.length) {
+    p.elemente = STIL_ELEMENTE[p.stil].slice();
+    annahmen.push('Keine Elemente genannt, daher Standard für ' + p.stil);
+  }
+  if (p.swing === null) p.swing = p.stil === 'hiphop' ? 0.12 : 0;
+  return annahmen;
+}
+
+/* ---------- Generator ---------- */
+function stufeZuNote(stufe, skala, grundton) {
+  const n = skala.length;
+  const okt = Math.floor(stufe / n);
+  const idx = ((stufe % n) + n) % n;
+  return grundton + skala[idx] + 12 * okt;
+}
+function tiefsterTon(pc, unter) { let n = unter; while (n % 12 !== pc) n++; return n; }
+const clamp = (v, lo = 1, hi = 127) => Math.max(lo, Math.min(hi, Math.round(v)));
+const range = (a, b, st = 1) => { const o = []; for (let i = a; i < b; i += st) o.push(i); return o; };
+
+function addNote(list, start, len, note, vel, ch) {
+  list.push({ s: Math.round(start), e: Math.round(start) + Math.max(1, Math.round(len)), n: note, v: clamp(vel), c: ch });
+}
+
+function drumMuster(p, rng) {
+  const notes = [], kickMap = {};
+  const st = p.stil, sw = Math.floor(p.swing * S);
+  const { heavy, minimal, abstract } = p;
+  const kickV = heavy ? 122 : 105, snareV = heavy ? 118 : 100;
+
+  for (let b = 0; b < p.takte; b++) {
+    const o = b * 16;
+    let kicks, snares, hats, snareNote;
+    if (st === 'hiphop') {
+      kicks = [0].concat(rng.sample([3, 7, 10, 11, 14], minimal ? 1 : 2));
+      snares = [4, 12]; hats = range(0, 16, 2); snareNote = 38;
+    } else if (st === 'trap') {
+      kicks = [0].concat(rng.sample([3, 6, 7, 10, 11, 14], minimal ? 1 : rng.choice([2, 3])));
+      snares = [8]; hats = range(0, 16); snareNote = 39;
+    } else if (st === 'techno' || st === 'house') {
+      kicks = [0, 4, 8, 12]; snares = [4, 12]; hats = [2, 6, 10, 14]; snareNote = 39;
+    } else if (st === 'dnb') {
+      kicks = [0, 10]; snares = [4, 12]; hats = range(0, 16, 2); snareNote = 38;
+    } else { kickMap[b] = [0]; continue; }
+
+    if (minimal) hats = hats.filter((_, i) => i % 2 === 0);
+    if (abstract) {
+      const versetze = (liste, behalteErste) => {
+        const neu = [];
+        liste.forEach((s, i) => {
+          if (behalteErste && i === 0) { neu.push(s); return; }
+          const r = rng.random();
+          if (r < 0.15) return;
+          if (r < 0.40) s = Math.max(0, Math.min(15, s + rng.choice([-1, 1])));
+          neu.push(s);
+        });
+        return Array.from(new Set(neu)).sort((x, y) => x - y);
+      };
+      kicks = versetze(kicks, true);
+      snares = versetze(snares); if (!snares.length) snares = [snares0(st)];
+      hats = versetze(hats);
+    }
+    kickMap[b] = kicks.slice().sort((x, y) => x - y);
+    const tick = (step) => (o + step) * S + (step % 2 === 1 ? sw : 0);
+
+    for (const s of kicks) addNote(notes, tick(s), 60, 36, kickV + rng.int(-5, 5), 9);
+    for (const s of snares) addNote(notes, tick(s), 60, snareNote, snareV + rng.int(-5, 5), 9);
+    for (const s of hats) {
+      const note = rng.random() < 0.06 ? 46 : 42;
+      addNote(notes, tick(s), 40, note, 62 + (s % 4 === 0 ? 16 : 0) + rng.int(-10, 10), 9);
+    }
+    if (st === 'trap' && !minimal && b % 2 === 1) {
+      for (let k = 0; k < 4; k++) addNote(notes, (o + 14) * S + k * (S / 2), S / 2 - 5, 42, 60 + k * 12, 9);
+    }
+    if (abstract) {
+      const n = rng.int(1, 3);
+      for (let i = 0; i < n; i++) addNote(notes, tick(rng.int(0, 15)), 40, rng.choice([37, 45, 39]), rng.int(40, 70), 9);
+    }
+  }
+  return { notes, kickMap };
+}
+function snares0(st) { return st === 'trap' ? 8 : 4; }
+
+function compose(p) {
+  const rng = makeRng(p.seed);
+  const sk = SKALEN[p.skala], sk7 = SKALEN7[p.skala];
+  const { pc, takte, stil: st, elemente: elems, minimal, abstract, heavy } = p;
+  const sw = Math.floor(p.swing * S);
+  const has = (e) => elems.includes(e);
+
+  const liste = (minimal || abstract) ? MINIMAL_PROGRESSIONEN : PROGRESSIONEN;
+  const folge = rng.choice(liste);
+  const akkordTakte = (st === 'ambient' || minimal) ? 2 : 1;
+  const stufeBei = (bar) => folge[Math.floor(bar / akkordTakte) % folge.length];
+  const wurzelPc = (bar) => (pc + sk7[stufeBei(bar) % 7]) % 12;
+
+  const drums = drumMuster(p, rng);
+  const tracks = [];
+  const mk = (name, ch, program, notes) => ({
+    name, channel: ch, notes,
+    other: program === null ? [] : [{ t: 0, bytes: [0xC0 | ch, program] }],
+  });
+
+  if (has('drums') && drums.notes.length) tracks.push(mk('Drums', 9, null, drums.notes));
+
+  if (has('808')) {
+    const notes = [];
+    const lo = has('sub') ? 36 : 31;
+    for (let b = 0; b < takte; b++) {
+      const note = tiefsterTon(wurzelPc(b), lo);
+      let steps = drums.kickMap[b] || [0];
+      if (minimal) steps = steps.slice(0, 1);
+      steps.forEach((s, i) => {
+        const ende = i + 1 < steps.length ? steps[i + 1] : 16;
+        addNote(notes, (b * 16 + s) * S, (ende - s) * S - 10, note, heavy ? 118 : 100, 2);
+      });
+    }
+    tracks.push(mk('808', 2, 38, notes));
+  }
+
+  if (has('sub')) {
+    const notes = [];
+    const lo = has('808') ? 24 : 31;
+    for (let b = 0; b < takte; b++) {
+      const note = tiefsterTon(wurzelPc(b), lo);
+      if (['techno', 'house', 'dnb'].includes(st) && !has('808')) {
+        for (const s of [2, 6, 10, 14]) addNote(notes, (b * 16 + s) * S, 2 * S - 15, note, 95, 3);
+      } else if (b % akkordTakte === 0) {
+        addNote(notes, b * 16 * S, Math.min(akkordTakte, takte - b) * 16 * S - 15, note, 90, 3);
+      }
+    }
+    tracks.push(mk('Sub', 3, 38, notes));
+  }
+
+  if (has('chords')) {
+    const notes = [];
+    const basis = 48 + pc;
+    for (let b = 0; b < takte; b += akkordTakte) {
+      const s_ = stufeBei(b);
+      const len = Math.min(akkordTakte, takte - b) * 16 * S - 15;
+      for (const i of [0, 2, 4]) addNote(notes, b * 16 * S, len, stufeZuNote(s_ + i, sk7, basis), 58, 1);
+    }
+    tracks.push(mk('Akkorde', 1, 89, notes));
+  }
+
+  let polyInfo = null;
+  if (has('melody')) {
+    const notes = [];
+    const basis = 60 + pc - (pc >= 7 ? 12 : 0);
+    const dichte = minimal ? 0.3 : 0.55;
+    const total = takte * 16;
+    let r, rhythmus, pitchLen, muster;
+
+    if (p.poly) {
+      r = rng.choice([3, 5, 7]);
+      const kT = Math.max(1, Math.round(r * (minimal ? 0.3 : 0.45)));
+      rhythmus = new Array(r).fill(false);
+      [0].concat(rng.sample(range(1, r), kT - 1)).forEach((pos) => { rhythmus[pos] = true; });
+      pitchLen = rng.choice([2, 3, 4, 5].filter((x) => x !== r));
+      muster = () => rhythmus;
+      polyInfo = r + ' gegen 16, Tonzyklus ' + pitchLen;
+    } else {
+      r = 16;
+      const basisMuster = [true];
+      for (let i = 1; i < 16; i++) basisMuster.push(rng.random() < (i % 4 === 0 ? 0.7 : dichte * 0.6));
+      muster = (bar) => {
+        if (bar % 4 === 3) {
+          const m = basisMuster.slice();
+          for (const s of rng.sample(range(1, 16), 2)) m[s] = !m[s];
+          return m;
+        }
+        return basisMuster;
+      };
+      pitchLen = abstract ? rng.choice([3, 5]) : 4;
+    }
+    const tonfolge = rng.choices([0, 2, 4, 1, 3, 5, 6, 7], [5, 4, 4, 2, 2, 2, 1, 2], pitchLen);
+    let k = 0;
+    for (let i = 0; i < total; i++) {
+      const bar = Math.floor(i / 16);
+      const pat = muster(bar);
+      const c = i % r;
+      if (!pat[c]) continue;
+      let nxt = r;
+      for (let j = 1; j <= r; j++) { if (pat[(c + j) % r]) { nxt = j; break; } }
+      const shift = sk.length === 7 ? stufeBei(bar) : 0;
+      const note = stufeZuNote(tonfolge[k % pitchLen] + shift, sk, basis);
+      k++;
+      const start = i * S + (i % 2 === 1 ? sw : 0);
+      let len = Math.max(S / 2, Math.floor(Math.min(nxt, 4) * S * 0.9));
+      len = Math.min(len, total * S - start);
+      addNote(notes, start, len, note, 82 + (i % 4 === 0 ? 14 : 0) + (heavy ? 10 : 0) + rng.int(-8, 8), 0);
+    }
+    tracks.push(mk('Melodie', 0, 81, notes));
+  }
+
+  return {
+    tpb: TPB, format: 1, timeSig: true,
+    tempos: [{ t: 0, tp: Math.round(60000000 / p.bpm) }],
+    tracks,
+    meta: { folge: folge.map((s) => STUFEN[s]).join('-'), polyInfo },
+  };
+}
+
+/* ---------- MIDI lesen ---------- */
+function parseMidi(buf) {
+  const d = new Uint8Array(buf);
+  const u32 = (i) => ((d[i] << 24) | (d[i + 1] << 16) | (d[i + 2] << 8) | d[i + 3]) >>> 0;
+  const u16 = (i) => (d[i] << 8) | d[i + 1];
+  if (d.length < 14 || u32(0) !== 0x4d546864) throw new Error('Das ist keine MIDI-Datei.');
+  const format = u16(8), ntrks = u16(10), div = u16(12);
+  if (div & 0x8000) throw new Error('SMPTE-Zeitbasis wird nicht unterstützt.');
+  let pos = 8 + u32(4);
+  const tempos = [], tracks = [];
+
+  for (let ti = 0; ti < ntrks && pos + 8 <= d.length; ti++) {
+    if (u32(pos) !== 0x4d54726b) throw new Error('Spur ' + ti + ' ist beschädigt.');
+    const len = u32(pos + 4);
+    let i = pos + 8;
+    const endPos = Math.min(d.length, i + len);
+    pos = endPos;
+    let t = 0, running = 0, name = '';
+    const open = {}, notes = [], other = [];
+    const vlq = () => { let v = 0, b; do { b = d[i++]; v = (v << 7) | (b & 0x7f); } while (b & 0x80 && i < endPos); return v; };
+
+    while (i < endPos) {
+      t += vlq();
+      let st = d[i];
+      if (st < 0x80) st = running; else i++;
+      if (st === 0xff) {
+        const type = d[i++]; const l = vlq(); const data = Array.from(d.slice(i, i + l)); i += l;
+        if (type === 0x51 && l === 3) tempos.push({ t, tp: (data[0] << 16) | (data[1] << 8) | data[2] });
+        else if (type === 0x2f) { /* Ende */ }
+        else {
+          if (type === 0x03) name = String.fromCharCode.apply(null, data);
+          const lv = []; let x = l; lv.unshift(x & 0x7f); while ((x >>= 7)) lv.unshift((x & 0x7f) | 0x80);
+          other.push({ t, bytes: [0xff, type, ...lv, ...data] });
+        }
+      } else if (st === 0xf0 || st === 0xf7) {
+        const l = vlq(); const data = Array.from(d.slice(i, i + l)); i += l;
+        const lv = []; let x = l; lv.unshift(x & 0x7f); while ((x >>= 7)) lv.unshift((x & 0x7f) | 0x80);
+        other.push({ t, bytes: [st, ...lv, ...data] });
+      } else {
+        running = st;
+        const type = st & 0xf0, ch = st & 0x0f;
+        const n = (type === 0xc0 || type === 0xd0) ? 1 : 2;
+        const a = d[i], b2 = n === 2 ? d[i + 1] : 0;
+        i += n;
+        if (type === 0x90 && b2 > 0) {
+          const nn = { s: t, e: null, n: a, v: b2, c: ch };
+          (open[ch + ':' + a] = open[ch + ':' + a] || []).push(nn); notes.push(nn);
+        } else if (type === 0x80 || type === 0x90) {
+          const q = open[ch + ':' + a];
+          if (q && q.length) q.shift().e = t;
+        } else {
+          other.push({ t, bytes: n === 2 ? [st, a, b2] : [st, a] });
+        }
+      }
+    }
+    for (const n of notes) if (n.e === null) n.e = t;
+    tracks.push({ name, notes, other, end: t, channel: notes.length ? notes[0].c : 0 });
+  }
+  tempos.sort((a, b) => a.t - b.t);
+  return { tpb: div, format, tempos, tracks, timeSig: false, meta: {} };
+}
+
+/* ---------- MIDI schreiben ---------- */
+function vlqBytes(v) {
+  const o = [v & 0x7f];
+  while ((v >>= 7)) o.unshift((v & 0x7f) | 0x80);
+  return o;
+}
+function trackBytes(events) {
+  events.sort((a, b) => a.t - b.t || a.o - b.o);
+  const out = [];
+  let last = 0;
+  for (const e of events) { out.push(...vlqBytes(Math.max(0, e.t - last)), ...e.bytes); last = Math.max(last, e.t); }
+  out.push(0, 0xff, 0x2f, 0);
+  return out;
+}
+function writeMidi(model) {
+  const chunks = [];
+  const tempoEv = model.tempos.map((x) => ({ t: x.t, o: 0, bytes: [0xff, 0x51, 3, (x.tp >> 16) & 255, (x.tp >> 8) & 255, x.tp & 255] }));
+  if (model.timeSig) tempoEv.push({ t: 0, o: 0, bytes: [0xff, 0x58, 4, 4, 2, 24, 8] });
+  chunks.push(trackBytes(tempoEv));
+  for (const tr of model.tracks) {
+    const ev = [];
+    if (tr.name && !tr.other.some((o) => o.bytes[0] === 0xff && o.bytes[1] === 0x03)) {
+      const nb = Array.from(new TextEncoder().encode(tr.name));
+      ev.push({ t: 0, o: 0, bytes: [0xff, 0x03, ...vlqBytes(nb.length), ...nb] });
+    }
+    for (const o of tr.other) ev.push({ t: o.t, o: 1, bytes: o.bytes });
+    for (const n of tr.notes) {
+      ev.push({ t: n.s, o: 2, bytes: [0x90 | n.c, n.n, n.v] });
+      ev.push({ t: n.e, o: 0, bytes: [0x80 | n.c, n.n, 0] });
+    }
+    if (!ev.length) continue;
+    chunks.push(trackBytes(ev));
+  }
+  const out = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, 0, chunks.length, (model.tpb >> 8) & 255, model.tpb & 255];
+  for (const c of chunks) {
+    const l = c.length;
+    out.push(0x4d, 0x54, 0x72, 0x6b, (l >>> 24) & 255, (l >> 16) & 255, (l >> 8) & 255, l & 255);
+    for (let i = 0; i < c.length; i++) out.push(c[i]);
+  }
+  return new Uint8Array(out);
+}
+
+/* ---------- ZIP (nur speichern, ohne Kompression) ---------- */
+function crc32(bytes) {
+  if (!crc32.t) {
+    crc32.t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crc32.t[n] = c >>> 0; }
+  }
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = crc32.t[(c ^ bytes[i]) & 255] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function makeZip(name, data) {
+  const nb = new TextEncoder().encode(name), crc = crc32(data), n = data.length;
+  const date = ((2026 - 1980) << 9) | (10 << 5) | 4;
+  const le16 = (v) => [v & 255, (v >> 8) & 255];
+  const le32 = (v) => [v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >>> 24) & 255];
+  const local = [...le32(0x04034b50), ...le16(20), ...le16(0x0800), ...le16(0), ...le16(0), ...le16(date),
+    ...le32(crc), ...le32(n), ...le32(n), ...le16(nb.length), ...le16(0), ...nb];
+  const central = [...le32(0x02014b50), ...le16(20), ...le16(20), ...le16(0x0800), ...le16(0), ...le16(0), ...le16(date),
+    ...le32(crc), ...le32(n), ...le32(n), ...le16(nb.length), ...le16(0), ...le16(0), ...le16(0), ...le16(0), ...le32(0), ...le32(0), ...nb];
+  const cdOffset = local.length + n;
+  const end = [...le32(0x06054b50), ...le16(0), ...le16(0), ...le16(1), ...le16(1), ...le32(central.length), ...le32(cdOffset), ...le16(0)];
+  const out = new Uint8Array(local.length + n + central.length + end.length);
+  out.set(local, 0); out.set(data, local.length); out.set(central, local.length + n); out.set(end, local.length + n + central.length);
+  return out;
+}
+
+/* ---------- Werkzeug: Analyse, Quantisieren, Tempo, Drift ---------- */
+const endTick = (m) => { let e = 0; for (const tr of m.tracks) { e = Math.max(e, tr.end || 0); for (const n of tr.notes) e = Math.max(e, n.e); } return e; };
+const tp2bpm = (tp) => 60000000 / tp;
+
+function tempoStats(tempos, total) {
+  if (!tempos.length) return { mittel: 120, lo: 120, hi: 120, anz: 0 };
+  const pts = tempos.slice();
+  if (pts[0].t > 0) pts.unshift({ t: 0, tp: 500000 });
+  let summe = 0, dauer = 0;
+  pts.forEach((p, i) => {
+    const bis = i + 1 < pts.length ? pts[i + 1].t : Math.max(total, p.t + 1);
+    summe += p.tp * (bis - p.t); dauer += bis - p.t;
+  });
+  const bpms = pts.map((p) => tp2bpm(p.tp));
+  return { mittel: tp2bpm(summe / Math.max(1, dauer)), lo: Math.min(...bpms), hi: Math.max(...bpms), anz: tempos.length };
+}
+function tickZuSek(tick, tempos, tpb) {
+  const pts = tempos.slice();
+  if (!pts.length || pts[0].t > 0) pts.unshift({ t: 0, tp: 500000 });
+  let sek = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const bis = i + 1 < pts.length ? pts[i + 1].t : Infinity;
+    if (tick <= bis) return sek + (tick - pts[i].t) * pts[i].tp / 1e6 / tpb;
+    sek += (bis - pts[i].t) * pts[i].tp / 1e6 / tpb;
+  }
+  return sek;
+}
+function rasterTicks(g, tpb) {
+  const tri = g.endsWith('t'), n = parseInt(g, 10), base = tpb * 4 / n;
+  return tri ? base * 2 / 3 : base;
+}
+function abweichungen(starts, raster) {
+  return starts.map((s) => { const r = ((s % raster) + raster) % raster; return r > raster / 2 ? r - raster : r; });
+}
+function driftSchaetzung(starts, raster) {
+  const st = Array.from(new Set(starts)).sort((a, b) => a - b);
+  if (st.length < 8) return null;
+  const res = abweichungen(st, raster), entw = [res[0]];
+  let versatz = 0;
+  for (let i = 1; i < res.length; i++) {
+    const d = res[i] - res[i - 1];
+    if (d > raster / 2) versatz -= raster; else if (d < -raster / 2) versatz += raster;
+    entw.push(res[i] + versatz);
+  }
+  const n = st.length, mx = st.reduce((a, b) => a + b, 0) / n, my = entw.reduce((a, b) => a + b, 0) / n;
+  let zae = 0, nen = 0;
+  for (let i = 0; i < n; i++) { zae += (st[i] - mx) * (entw[i] - my); nen += (st[i] - mx) ** 2; }
+  return nen === 0 ? null : zae / nen;
+}
+const allStarts = (m) => m.tracks.flatMap((tr) => tr.notes.map((n) => n.s));
+const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+
+function analysiere(m) {
+  const total = endTick(m);
+  const ts = tempoStats(m.tempos, total);
+  const starts = allStarts(m);
+  const ms = 60000 / ts.mittel / m.tpb;
+  const out = { ts, dauer: tickZuSek(total, m.tempos, m.tpb), anzNoten: starts.length, spuren: [], dev: {}, drift: null };
+  m.tracks.forEach((tr, i) => {
+    if (!tr.notes.length) return;
+    const ns = tr.notes.map((n) => n.n);
+    out.spuren.push({ name: tr.name || ('Spur ' + (i + 1)), anz: ns.length, lo: Math.min(...ns), hi: Math.max(...ns), drums: tr.notes[0].c === 9 });
+  });
+  if (starts.length) {
+    for (const g of ['16', '8']) {
+      const ab = abweichungen(starts, rasterTicks(g, m.tpb)).map(Math.abs);
+      out.dev[g] = { mittel: mean(ab) * ms, max: Math.max(...ab) * ms };
+    }
+    const sl = driftSchaetzung(starts, rasterTicks('16', m.tpb));
+    if (sl !== null && Math.abs(sl) > 0.002) out.drift = { prozent: sl * 100, scheinbar: ts.mittel / (1 + sl) };
+  }
+  return out;
+}
+
+function kopie(m) {
+  return {
+    tpb: m.tpb, format: m.format, timeSig: m.timeSig, meta: m.meta,
+    tempos: m.tempos.map((x) => ({ ...x })),
+    tracks: m.tracks.map((tr) => ({
+      name: tr.name, channel: tr.channel, end: tr.end,
+      notes: tr.notes.map((n) => ({ ...n })),
+      other: tr.other.map((o) => ({ t: o.t, bytes: o.bytes.slice() })),
+    })),
+  };
+}
+
+function bearbeite(m0, o) {
+  const m = kopie(m0);
+  const tpb = m.tpb, total = endTick(m);
+  const ts = tempoStats(m.tempos, total);
+  const g = rasterTicks(o.raster, tpb);
+  const vorher = allStarts(m);
+  const abVor = vorher.length ? abweichungen(vorher, g).map(Math.abs) : [0];
+
+  let neuesTempo = null;
+  if (o.tempoModus === 'fest') neuesTempo = o.tempo;
+  else if (o.tempoModus === 'glatt') neuesTempo = ts.mittel;
+  let tempos = m.tempos.length ? m.tempos : [{ t: 0, tp: 500000 }];
+  if (neuesTempo) {
+    const neuTp = Math.round(60000000 / neuesTempo);
+    if (o.zeitModus === 'sekunden') {
+      const um = (t) => Math.round(tickZuSek(t, m.tempos, tpb) / (neuTp / 1e6) * tpb);
+      for (const tr of m.tracks) {
+        for (const n of tr.notes) { n.s = um(n.s); n.e = um(n.e); }
+        for (const e of tr.other) e.t = um(e.t);
+      }
+    }
+    tempos = [{ t: 0, tp: neuTp }];
+  }
+  const bpmOut = tempos.length === 1 ? tp2bpm(tempos[0].tp) : ts.mittel;
+  const ms = 60000 / bpmOut / tpb;
+
+  const korr = new Map();
+  if (o.drift) {
+    let off = 0;
+    for (const t of Array.from(new Set(allStarts(m))).sort((a, b) => a - b)) {
+      let r = (((t - off) % g) + g) % g;
+      if (r > g / 2) r -= g;
+      off += o.traegheit * r;
+      korr.set(t, off);
+    }
+  }
+  for (const tr of m.tracks) {
+    for (const n of tr.notes) {
+      const start = n.s - (korr.get(n.s) || 0);
+      let dauer = n.e - n.s;
+      const q = Math.round(start / g) * g;
+      let neu = start + (q - start) * o.staerke / 100;
+      if (o.swing && Math.round(q / g) % 2 === 1) neu += o.swing / 100 * g;
+      if (o.laengen) dauer = Math.max(g, Math.round(dauer / g) * g);
+      n.s = Math.max(0, Math.round(neu));
+      n.e = n.s + Math.max(1, Math.round(dauer));
+    }
+  }
+  const nachher = allStarts(m);
+  const abNach = nachher.length ? abweichungen(nachher, g).map(Math.abs) : [0];
+  m.tempos = tempos;
+  m.tracks = m.tracks.filter((tr) => tr.notes.length || tr.other.length);
+  m.timeSig = false;
+  return {
+    model: m,
+    bericht: {
+      tempoVon: ts, tempoNach: neuesTempo ? bpmOut : null, anz: m.tempos.length,
+      devVor: { mittel: mean(abVor) * ms, max: Math.max(...abVor) * ms },
+      devNach: { mittel: mean(abNach) * ms, max: Math.max(...abNach) * ms },
+    },
+  };
+}
+
+
+function tempoMedian(tempos, total) {
+  if (!tempos.length) return 120;
+  const pts = tempos.slice();
+  if (pts[0].t > 0) pts.unshift({ t: 0, tp: 500000 });
+  const seg = pts.map((p, i) => ({ bpm: tp2bpm(p.tp), w: (i + 1 < pts.length ? pts[i + 1].t : Math.max(total, p.t + 1)) - p.t })).sort((a, b) => a.bpm - b.bpm);
+  const half = seg.reduce((a, x) => a + x.w, 0) / 2;
+  let acc = 0;
+  for (const x of seg) { acc += x.w; if (acc >= half) return x.bpm; }
+  return seg[seg.length - 1].bpm;
+}
+
+/* ---------- Tempo-Schaetzung aus den Notenabstaenden (reale Zeit, mit Tempo-Map) ---------- */
+function schaetzeTempo(m) {
+  const secs = allStarts(m).map((t) => tickZuSek(t, m.tempos, m.tpb));
+  const bins = Array.from(new Set(secs.map((x) => Math.round(x * 100)))).sort((a, b) => a - b);
+  if (bins.length < 24) return null;
+  const arr = new Float32Array(bins[bins.length - 1] + 900);
+  for (const b of bins) for (let d = -2; d <= 2; d++) { const k = b + d; if (k >= 0) arr[k] = Math.max(arr[k], 1 - Math.abs(d) * 0.3); }
+  const score = (lagSek) => {
+    let sum = 0;
+    for (const b of bins) { const k = Math.round(b + lagSek * 100); if (k < arr.length) sum += arr[k]; }
+    return sum / bins.length;
+  };
+  const kurve = [];
+  for (let bpm = 60; bpm <= 190; bpm += 0.25) {
+    const lag = 60 / bpm;
+    let sc = 0;
+    for (let k = 1; k <= 4; k++) sc += score(k * lag) / Math.sqrt(k);
+    kurve.push([bpm, sc]);
+  }
+  let best = kurve[0];
+  for (const p of kurve) if (p[1] > best[1]) best = p;
+  const mittel = kurve.reduce((a, p) => a + p[1], 0) / kurve.length;
+  const bpm = Math.round(best[0] * 2) / 2;
+  const kand = [bpm];
+  for (const f of [2, 0.5]) { const x = bpm * f; if (x >= 40 && x <= 240) kand.push(Math.round(x * 2) / 2); }
+  return { bpm, kand, sicher: best[1] / mittel };
+}
+
+/* ---------- Beispiel mit Tempo-Drift (Suno-artige Aufnahme) ---------- */
+function beispielDrift() {
+  const rng = makeRng(11);
+  const notes = [];
+  let T = 0;
+  const pcs = [0, 3, 7, 10, 7, 3, 12, 10];
+  for (let j = 0; j < 16 * 8; j++) {
+    const beat = j / 2, tempo = 100 + 8 * (beat / 64);
+    const tick = Math.max(0, Math.round(T * 100 / 60 * TPB + rng.int(-7, 7)));
+    notes.push({ s: tick, e: tick + 190, n: 56 + pcs[j % 8], v: 90, c: 0 });
+    T += 0.5 * 60 / tempo;
+  }
+  return {
+    tpb: TPB, format: 1, timeSig: false, meta: {},
+    tempos: [{ t: 0, tp: 600000 }],
+    tracks: [{ name: 'Beispiel mit Drift', channel: 0, notes, other: [], end: notes[notes.length - 1].e }],
+  };
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { parsePrompt, vervollstaendige, compose, parseMidi, writeMidi, makeZip, analysiere, bearbeite,
+    beispielDrift, endTick, tickZuSek, schaetzeTempo, tempoMedian, NAMEN, SKALEN, STIL_BPM };
+}
+
+</script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const f1 = (x) => x.toFixed(1);
+
+  /* ---------- Speichern: in der Claude-Ansicht als ZIP (dort ist .mid nicht erlaubt), sonst direkt als .mid ---------- */
+  const IN_CLAUDE = !!window.claude;
+  async function speichern(model, basisname, errEl) {
+    errEl.hidden = true;
+    try {
+      const bytes = writeMidi(model);
+      if (IN_CLAUDE) {
+        const dl = await window.claude.use('downloads');
+        if (!dl) throw { code: 'unavailable' };
+        await dl.save({ filename: basisname + '.zip', data: new Blob([makeZip(basisname + '.mid', bytes)], { type: 'application/zip' }) });
+      } else {
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/midi' }));
+        const a = document.createElement('a');
+        a.href = url; a.download = basisname + '.mid';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+      }
+    } catch (e) {
+      if (e && e.code === 'declined') return;
+      errEl.textContent = (e && e.code === 'unavailable') ? 'Speichern ist in dieser Ansicht nicht verfügbar.' : 'Speichern hat nicht geklappt. Bitte noch einmal versuchen.';
+      errEl.hidden = false;
+    }
+  }
+  const sh = document.getElementById('save-hint');
+  if (sh && !IN_CLAUDE) sh.textContent = 'Die Datei wird direkt als .mid gespeichert. Jede Spur wird in FL Studio ein eigener Kanal. Die Vorschau ist ein einfacher Testklang, kein Sound aus FL Studio.';
+  const bt = document.getElementById('btn-save-gen'), bt2 = document.getElementById('t-save');
+  if (!IN_CLAUDE) { if (bt) bt.textContent = 'Als MIDI speichern'; if (bt2) bt2.textContent = 'Als MIDI speichern'; }
+
+  /* ---------- Piano-Roll ---------- */
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  function trackColor(tr, i) {
+    const nm = (tr.name || '').toLowerCase();
+    if (tr.notes.length && tr.notes[0].c === 9) return css('--ink-2');
+    if (nm.includes('melod')) return css('--accent');
+    if (nm.includes('808') || nm.includes('sub')) return css('--cool');
+    if (nm.includes('akkord')) return css('--cool') + '88';
+    return [css('--accent'), css('--cool'), css('--ink-2')][i % 3];
+  }
+  const drumRow = (n) => (n === 36 ? 0 : (n === 42 || n === 46) ? 2 : 1);
+
+  function drawRoll(canvas, layers) {
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    const g = canvas.getContext('2d'); g.scale(dpr, dpr);
+    g.clearRect(0, 0, W, H);
+    let total = 1, lo = 127, hi = 0, hasDrums = false;
+    for (const L of layers) {
+      total = Math.max(total, endTick(L.model));
+      for (const tr of L.model.tracks) for (const n of tr.notes) {
+        if (n.c === 9) hasDrums = true; else { lo = Math.min(lo, n.n); hi = Math.max(hi, n.n); }
+      }
+    }
+    if (hi < lo) { lo = 48; hi = 72; }
+    lo -= 1; hi += 1;
+    const tpb = layers[0].model.tpb, bar = tpb * 4;
+    const padL = 6, padR = 6, pw = W - padL - padR;
+    const drumH = hasDrums ? 46 : 0, pitchH = H - drumH - (hasDrums ? 8 : 0) - 6;
+    const x = (t) => padL + t / total * pw;
+    g.strokeStyle = css('--grid'); g.lineWidth = 1;
+    for (let t = 0; t <= total; t += bar) { const xx = Math.round(x(t)) + .5; g.beginPath(); g.moveTo(xx, 0); g.lineTo(xx, H); g.stroke(); }
+    const ph = Math.max(2, Math.min(9, pitchH / (hi - lo + 1)));
+    for (const L of layers) {
+      L.model.tracks.forEach((tr, i) => {
+        const col = L.ghost ? css('--ghost') : trackColor(tr, i);
+        for (const n of tr.notes) {
+          const x0 = x(n.s), w = Math.max(1.5, x(n.e) - x0 - 0.5);
+          let y, h;
+          if (n.c === 9) { h = drumH / 3 - 3; y = H - drumH - 3 + drumRow(n.n) * (drumH / 3) + 1.5; }
+          else { h = ph - 1; y = 3 + (hi - n.n) / (hi - lo + 1) * pitchH; }
+          if (L.ghost) { g.strokeStyle = col; g.lineWidth = 1; g.strokeRect(x0 + .5, y + .5, Math.max(1, w - 1), Math.max(1, h - 1)); }
+          else { g.fillStyle = col; g.fillRect(x0, y, w, h); }
+        }
+      });
+    }
+  }
+  let redraw = [];
+  window.addEventListener('resize', () => redraw.forEach((f) => f()));
+  new MutationObserver(() => redraw.forEach((f) => f())).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => setTimeout(() => redraw.forEach((f) => f()), 50));
+
+  /* ---------- Vorhören (einfacher Testklang) ---------- */
+  let actx = null, stopTimer = null, playBtn = null;
+  function stopPlay() {
+    if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
+    if (actx) { try { actx.close(); } catch (e) {} actx = null; }
+    if (playBtn) { playBtn.textContent = 'Anhören'; playBtn = null; }
+  }
+  function play(model, btn) {
+    if (playBtn === btn) { stopPlay(); return; }
+    stopPlay();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    actx = new AC(); playBtn = btn; btn.textContent = 'Stopp';
+    const ctx = actx, t0 = ctx.currentTime + 0.15;
+    const master = ctx.createGain(); master.gain.value = 0.55;
+    const comp = ctx.createDynamicsCompressor(); master.connect(comp); comp.connect(ctx.destination);
+    const nb = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate), nd = nb.getChannelData(0);
+    for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+    const sec = (t) => tickZuSek(t, model.tempos, model.tpb);
+    const env = (gn, at, peak, dur, rel) => {
+      gn.gain.setValueAtTime(0.0001, at); gn.gain.linearRampToValueAtTime(peak, at + 0.006);
+      gn.gain.setValueAtTime(peak, at + Math.max(0.007, dur)); gn.gain.exponentialRampToValueAtTime(0.0001, at + Math.max(0.007, dur) + rel);
+    };
+    const noise = (at, dur, type, freq, peak) => {
+      const s = ctx.createBufferSource(); s.buffer = nb;
+      const fl = ctx.createBiquadFilter(); fl.type = type; fl.frequency.value = freq;
+      const gn = ctx.createGain(); env(gn, at, peak, 0.002, dur);
+      s.connect(fl); fl.connect(gn); gn.connect(master); s.start(at); s.stop(at + dur + 0.05);
+    };
+    let last = 0;
+    for (const tr of model.tracks) for (const n of tr.notes) {
+      const at = t0 + sec(n.s), dur = Math.max(0.03, sec(n.e) - sec(n.s)), vel = n.v / 127;
+      last = Math.max(last, at + dur);
+      if (n.c === 9) {
+        if (n.n === 36) {
+          const o = ctx.createOscillator(), gn = ctx.createGain(); o.type = 'sine';
+          o.frequency.setValueAtTime(150, at); o.frequency.exponentialRampToValueAtTime(42, at + 0.14);
+          env(gn, at, vel * 0.9, 0.02, 0.22); o.connect(gn); gn.connect(master); o.start(at); o.stop(at + 0.4);
+        } else if (n.n === 38 || n.n === 39) noise(at, 0.16, 'bandpass', 1800, vel * 0.5);
+        else if (n.n === 46) noise(at, 0.18, 'highpass', 7000, vel * 0.18);
+        else if (n.n === 42) noise(at, 0.04, 'highpass', 8000, vel * 0.16);
+        else noise(at, 0.08, 'bandpass', 900, vel * 0.25);
+        continue;
+      }
+      const f = 440 * Math.pow(2, (n.n - 69) / 12);
+      const o = ctx.createOscillator(), gn = ctx.createGain(), fl = ctx.createBiquadFilter();
+      if (n.n < 52) { o.type = 'sine'; fl.type = 'lowpass'; fl.frequency.value = 600; env(gn, at, vel * 0.8, dur * 0.9, 0.12); }
+      else { o.type = 'sawtooth'; fl.type = 'lowpass'; fl.frequency.value = 1900; env(gn, at, vel * (tr.notes.length > 200 ? 0.07 : 0.14), dur * 0.8, 0.12); }
+      o.frequency.value = f; o.connect(fl); fl.connect(gn); gn.connect(master); o.start(at); o.stop(at + dur + 0.3);
+    }
+    stopTimer = setTimeout(stopPlay, Math.max(500, (last - ctx.currentTime + 0.5) * 1000));
+  }
+
+  /* ---------- Komponieren ---------- */
+  const STIL_LABEL = { hiphop: 'Hip-Hop', trap: 'Trap', techno: 'Techno', house: 'House', dnb: 'Drum and Bass', ambient: 'Ambient' };
+  const SKALA_LABEL = { natuerlich: 'Natürlich Moll (diatonisch)', dorisch: 'Dorisch', phrygisch: 'Phrygisch', harmonisch: 'Harmonisch Moll', pentatonik: 'Moll-Pentatonik' };
+  const EL_LABEL = { drums: 'Drums', '808': '808', sub: 'Sub', melody: 'Melodie', chords: 'Akkorde' };
+  const EL_ORDER = ['drums', '808', 'sub', 'melody', 'chords'];
+  const FLAG_LABEL = { minimal: 'minimal', abstract: 'abstrakt', heavy: 'heavy', poly: 'polyrhythmisch' };
+
+  $('f-stil').innerHTML = Object.keys(STIL_LABEL).map((k) => `<option value="${k}">${STIL_LABEL[k]}</option>`).join('');
+  $('f-pc').innerHTML = NAMEN.map((n, i) => `<option value="${i}">${n}-Moll</option>`).join('');
+  $('f-skala').innerHTML = Object.keys(SKALA_LABEL).map((k) => `<option value="${k}">${SKALA_LABEL[k]}</option>`).join('');
+  $('elems').innerHTML = EL_ORDER.map((k) => `<label class="pill"><input type="checkbox" data-el="${k}"><span>${EL_LABEL[k]}</span></label>`).join('');
+  $('flags').innerHTML = Object.keys(FLAG_LABEL).map((k) => `<label class="pill"><input type="checkbox" data-flag="${k}"><span>${FLAG_LABEL[k]}</span></label>`).join('');
+
+  const BEISPIELE = [
+    'minimal abstract heavy hiphop-drums, sub, 808, and a melody polyrhythmisch, diatonisch, oder in g#',
+    'dark trap 140 bpm, 808, hi-hat rolls, eerie melody in F# phrygian',
+    'düsterer Techno, Gis-Moll, 16 Takte, drums, sub, melodie',
+    'drum and bass 174 bpm D minor dorian drums sub melody',
+    'ambient pad, sub, melancholic, Bb minor, 16 Takte',
+  ];
+  $('examples').innerHTML = BEISPIELE.map((t, i) => `<button class="chip" data-i="${i}">${esc(t.length > 52 ? t.slice(0, 50) + '…' : t)}</button>`).join('');
+
+  let P = null, gen = null, seed = Math.floor(Math.random() * 1e6) + 1;
+
+  function fuelleFelder(p, annahmen) {
+    $('f-stil').value = p.stil; $('f-pc').value = p.pc; $('f-skala').value = p.skala;
+    $('f-bpm').value = p.bpm; $('f-takte').value = p.takte;
+    $('f-swing').value = Math.round(p.swing * 100); $('v-swing').textContent = Math.round(p.swing * 100) + ' %';
+    document.querySelectorAll('[data-el]').forEach((c) => { c.checked = p.elemente.includes(c.dataset.el); });
+    document.querySelectorAll('[data-flag]').forEach((c) => { c.checked = !!p[c.dataset.flag]; });
+    $('annahmen').innerHTML = annahmen.map((a) => `<li>${esc(a)}</li>`).join('');
+  }
+  function leseFelder() {
+    const p = Object.assign({}, P);
+    p.stil = $('f-stil').value; p.pc = +$('f-pc').value; p.skala = $('f-skala').value;
+    p.bpm = Math.max(50, Math.min(220, +$('f-bpm').value || 90));
+    p.takte = Math.max(1, Math.min(64, +$('f-takte').value || 8));
+    p.swing = (+$('f-swing').value) / 100;
+    p.elemente = Array.from(document.querySelectorAll('[data-el]')).filter((c) => c.checked).map((c) => c.dataset.el);
+    document.querySelectorAll('[data-flag]').forEach((c) => { p[c.dataset.flag] = c.checked; });
+    p.seed = seed;
+    return p;
+  }
+  function neuLesen() {
+    P = parsePrompt($('prompt').value);
+    const an = vervollstaendige(P);
+    fuelleFelder(P, an);
+  }
+  function komponieren() {
+    const p = leseFelder();
+    if (!p.elemente.length) { $('gen-err').textContent = 'Wähle mindestens ein Element aus.'; $('gen-err').hidden = false; return; }
+    $('gen-err').hidden = true;
+    stopPlay();
+    gen = { model: compose(p), p };
+    const m = gen.model, a = analysiere(m);
+    const nn = m.tracks.reduce((s, t) => s + t.notes.length, 0);
+    $('gen-stats').innerHTML = [
+      ['Tonart', NAMEN[p.pc] + '-Moll', 1], ['Tempo', p.bpm + ' BPM'], ['Länge, ' + p.takte + ' Takte', f1(a.dauer) + ' s'],
+      ['Akkorde', m.meta.folge], ['Rhythmus', m.meta.polyInfo || (p.poly ? '–' : 'im Takt')], ['Noten', nn],
+    ].map(([k, v, hot]) => `<div class="stat${hot ? ' hot' : ''}"><b>${esc(v)}</b><i>${k}</i></div>`).join('');
+    $('gen-legend').innerHTML = m.tracks.map((t, i) => `<span style="--c:${trackColor(t, i)}">${esc(t.name)} (${t.notes.length})</span>`).join('');
+    const draw = () => drawRoll($('roll-gen'), [{ model: m }]);
+    draw(); redraw = redraw.filter((f) => f.id !== 'gen'); draw.id = 'gen'; redraw.push(draw);
+  }
+  $('prompt').addEventListener('input', neuLesen);
+  $('b-compose').onclick = komponieren;
+  $('b-reroll').onclick = () => { seed = Math.floor(Math.random() * 1e6) + 1; komponieren(); };
+  $('f-swing').addEventListener('input', () => { $('v-swing').textContent = $('f-swing').value + ' %'; });
+  $('examples').onclick = (e) => { const b = e.target.closest('[data-i]'); if (!b) return; $('prompt').value = BEISPIELE[+b.dataset.i]; neuLesen(); komponieren(); };
+  $('g-play').onclick = () => gen && play(gen.model, $('g-play'));
+  $('g-save').onclick = () => {
+    if (!gen) return;
+    const p = gen.p;
+    speichern(gen.model, NAMEN[p.pc].toLowerCase().replace('#', 'is') + '-moll_' + p.stil + '_' + p.bpm + 'bpm_s' + p.seed, $('gen-err'));
+  };
+
+  /* ---------- Bearbeiten ---------- */
+  let src = null, srcName = '', srcFile = 'datei', res = null;
+  function zeigeEingang() {
+    const a = analysiere(src), ts = a.ts, hatMap = ts.anz > 1;
+    const tempoTxt = ts.anz === 0 ? '120 (Standard)' : ts.anz === 1 ? f1(ts.mittel) : f1(ts.lo) + ' bis ' + f1(ts.hi);
+    const cells = [
+      ['Tempo, BPM', tempoTxt, hatMap], ['Dauer', f1(a.dauer) + ' s'], ['Noten', a.anzNoten],
+      ['Abw. 1/16, Mittel', a.dev['16'] ? f1(a.dev['16'].mittel) + ' ms' : '–'],
+      ['Abw. 1/16, Max', a.dev['16'] ? f1(a.dev['16'].max) + ' ms' : '–'],
+    ];
+    if (a.drift && !hatMap) cells.push(['Drift-Hinweis', (a.drift.prozent > 0 ? '+' : '') + f1(a.drift.prozent) + ' %', true]);
+    $('in-stats').innerHTML = cells.map(([k, v, hot]) => `<div class="stat${hot ? ' hot' : ''}"><b>${esc(v)}</b><i>${k}</i></div>`).join('');
+    $('in-tracks').innerHTML = a.spuren.map((s) => `<div class="tr"><span>${esc(s.name)}${s.drums ? ' (Drums)' : ''}</span><span>${s.anz} Noten, ${s.lo}-${s.hi}</span></div>`).join('');
+    $('src-name').textContent = srcName + (a.drift && !hatMap ? ' | Die Noten laufen gegen das Raster, scheinbares Tempo etwa ' + f1(a.drift.scheinbar) + ' BPM (grobe Schätzung).' : '');
+    $('map-hint').hidden = !hatMap;
+    if (hatMap) $('map-hint').textContent = 'Diese Datei hat ' + ts.anz + ' Tempowechsel (Tempo-Map). Die Schwankung ist darin schon erfasst, deshalb gibt es hier keinen Drift-Hinweis. Mittel und Median unten stammen aus der Map. Für ein festes Tempo nimm das echte Projekt-Tempo, wenn du es kennst.';
+    let chips = [];
+    if (hatMap) chips = [['Mittel', ts.mittel], ['Median', tempoMedian(src.tempos, endTick(src))]];
+    else { const est = schaetzeTempo(src); if (est) chips = est.kand.map((b, i) => [i === 0 ? 'Schätzung' : (b > est.bpm ? 'doppelt' : 'halb'), b]); }
+    $('tempo-chips').innerHTML = chips.length ? '<span class="note">Tempo wählen:</span>' + chips.map(([l, b]) => `<button class="chip" data-bpm="${Math.round(b * 10) / 10}">${l} ${f1(b)}</button>`).join('') : '';
+    $('o-tempo').value = Math.round(ts.mittel * 10) / 10;
+    $('o-drift').checked = !hatMap;
+    $('tool-out').hidden = true; res = null;
+  }
+  function ladeBytes(bytes, name) {
+    $('tool-err').hidden = true;
+    try { src = parseMidi(bytes); srcName = name; srcFile = name; zeigeEingang(); }
+    catch (e) { $('tool-err').textContent = e.message || 'Die Datei konnte nicht gelesen werden.'; $('tool-err').hidden = false; }
+  }
+  $('file').addEventListener('change', (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader(); r.onload = () => ladeBytes(new Uint8Array(r.result), f.name); r.readAsArrayBuffer(f);
+  });
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', (e) => {
+    const f = e.dataTransfer.files[0]; if (!f) return;
+    const r = new FileReader(); r.onload = () => ladeBytes(new Uint8Array(r.result), f.name); r.readAsArrayBuffer(f);
+  });
+  const radio = (name) => document.querySelector(`input[name="${name}"]:checked`).value;
+  $('o-staerke').addEventListener('input', () => { $('v-staerke').textContent = $('o-staerke').value + ' %'; });
+  $('o-swing').addEventListener('input', () => { $('v-oswing').textContent = $('o-swing').value + ' %'; });
+  $('o-trag').addEventListener('input', () => { $('v-trag').textContent = ($('o-trag').value / 100).toFixed(2); });
+
+  $('b-edit').onclick = () => {
+    if (!src) return;
+    stopPlay();
+    const o = {
+      raster: $('o-raster').value, staerke: +$('o-staerke').value, swing: +$('o-swing').value,
+      laengen: $('o-laengen').checked, drift: $('o-drift').checked, traegheit: +$('o-trag').value / 100,
+      tempoModus: radio('tm'), tempo: +$('o-tempo').value || 100, zeitModus: radio('zm'),
+    };
+    res = bearbeite(src, o);
+    const b = res.bericht;
+    const tempoNach = b.tempoNach ? f1(b.tempoNach) + ' BPM' : (b.anz > 1 ? b.anz + ' Wechsel' : f1(b.tempoVon.mittel) + ' BPM');
+    $('out-stats').innerHTML = [
+      ['Abweichung, Mittel', f1(b.devVor.mittel) + ' → ' + f1(b.devNach.mittel) + ' ms', 1],
+      ['Abweichung, Max', f1(b.devVor.max) + ' → ' + f1(b.devNach.max) + ' ms'],
+      ['Tempo', tempoNach],
+      ['Raster', '1/' + o.raster.replace('t', ' Triole') + ', ' + o.staerke + ' %'],
+    ].map(([k, v, hot]) => `<div class="stat${hot ? ' hot' : ''}"><b>${esc(v)}</b><i>${k}</i></div>`).join('');
+    $('tool-out').hidden = false;
+    const draw = () => drawRoll($('roll-tool'), [{ model: src, ghost: true }, { model: res.model }]);
+    draw(); redraw = redraw.filter((f) => f.id !== 'tool'); draw.id = 'tool'; redraw.push(draw);
+  };
+  $('tempo-chips').onclick = (e) => {
+    const b = e.target.closest('[data-bpm]'); if (!b) return;
+    $('o-tempo').value = b.dataset.bpm;
+    document.querySelector('input[name="tm"][value="fest"]').checked = true;
+  };
+  $('b-suno').onclick = () => {
+    document.querySelector('input[name="tm"][value="fest"]').checked = true;
+    document.querySelector('input[name="zm"][value="takte"]').checked = true;
+    $('o-drift').checked = false;
+    $('b-edit').click();
+  };
+  $('t-play').onclick = () => res && play(res.model, $('t-play'));
+  $('t-save').onclick = () => {
+    if (!res) return;
+    const base = (srcFile || 'datei').replace(/\.(mid|midi)$/i, '').replace(/[^\wäöüÄÖÜß .-]+/g, '_').trim().slice(0, 60) + '_bearbeitet';
+    speichern(res.model, base, $('tool-err2'));
+  };
+
+  /* ---------- Reiter ---------- */
+  function reiter(which) {
+    stopPlay();
+    const gen_ = which === 'gen';
+    $('p-gen').hidden = !gen_; $('p-tool').hidden = gen_;
+    $('tab-gen').setAttribute('aria-selected', gen_); $('tab-tool').setAttribute('aria-selected', !gen_);
+    try { history.replaceState(null, '', '#' + which); } catch (e) {}
+    setTimeout(() => redraw.forEach((f) => f()), 30);
+  }
+  $('tab-gen').onclick = () => reiter('gen'); $('tab-tool').onclick = () => reiter('tool');
+
+  /* ---------- Start: Arbeitszustand mit Beispielen ---------- */
+  neuLesen(); komponieren();
+  src = beispielDrift(); srcName = 'Beispiel: Aufnahme mit Tempo-Drift (100 auf 108 BPM, ohne Tempo-Eintrag)'; srcFile = 'beispiel-drift';
+  zeigeEingang();
+  if (location.hash === '#tool') reiter('tool');
+})();
+</script>
+</body>
+</html>
